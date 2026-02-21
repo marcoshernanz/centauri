@@ -208,9 +208,11 @@ Each action payload includes:
   - Created `/Users/marcoshernanz/dev/hackeurope2/PLAN.md` with full implementation roadmap.
   - Created extension scaffold: `/Users/marcoshernanz/dev/hackeurope2/manifest.json`, `/Users/marcoshernanz/dev/hackeurope2/package.json`, `/Users/marcoshernanz/dev/hackeurope2/tsconfig.json`.
   - Implemented baseline runtime: `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts`.
-  - Added command bar styling and static copy build step: `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`, `/Users/marcoshernanz/dev/hackeurope2/scripts/copy-static.mjs`.
+  - Added command bar styling and extension build script: `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`, `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
   - Verified `npm run build` and generated loadable `/Users/marcoshernanz/dev/hackeurope2/dist`.
   - Added `/Users/marcoshernanz/dev/hackeurope2/.gitignore` for build/runtime artifacts.
+  - Fixed runtime injection error by switching to bundled non-module output for content/background scripts and updating `/Users/marcoshernanz/dev/hackeurope2/manifest.json` background worker mode.
+  - Re-verified with `npm run build` and `npm run typecheck`.
 
 ## 12) Risk & Fallback Matrix
 

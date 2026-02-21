@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run clean && tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "build": "npm run clean && node scripts/build.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.30",
+    "esbuild": "^0.25.10",
     "typescript": "^5.9.2"
   }
 }
