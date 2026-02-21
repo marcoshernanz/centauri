@@ -51,9 +51,9 @@
 
 | ID | Priority | Status | Task | Estimate | Dependencies | Definition of Done |
 |---|---|---|---|---|---|---|
-| T01 | P0 | TODO | Bootstrap extension (MV3, TS build, folder structure) | 30m | None | Extension loads in Chrome, content + background scripts active |
-| T02 | P0 | TODO | Implement keyboard shortcut + command bar toggle | 30m | T01 | `Cmd/Ctrl+Shift+K` opens/closes bottom bar on supported pages |
-| T03 | P0 | TODO | Build command bar UI states (`idle/planning/executing/summarizing/done/error`) | 45m | T02 | UI renders state transitions and response panel |
+| T01 | P0 | DONE | Bootstrap extension (MV3, TS build, folder structure) | 30m | None | Extension loads in Chrome, content + background scripts active |
+| T02 | P0 | DONE | Implement keyboard shortcut + command bar toggle | 30m | T01 | `Cmd/Ctrl+Shift+K` opens/closes bottom bar on supported pages |
+| T03 | P0 | DONE | Build command bar UI states (`idle/planning/executing/summarizing/done/error`) | 45m | T02 | UI renders state transitions and response panel |
 | T04 | P0 | TODO | Define shared types and strict action schema | 45m | T01 | Typed schema for all actions + runtime validation |
 | T05 | P0 | TODO | Implement core executor actions (`CLICK`, `WAIT_FOR`, `BACK`, `SCROLL`) | 1h | T04 | Actions execute with success/error result payloads |
 | T06 | P0 | TODO | Implement extraction action (`EXTRACT_TEXT`) with fallback strategy | 45m | T05 | Extracts meaningful text from current page with truncation |
@@ -188,22 +188,29 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-21
-- Current phase: Planning docs
+- Current phase: Foundation complete (T01-T03)
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
+  - T01 Bootstrap extension scaffold
+  - T02 Keyboard shortcut + command bar toggle
+  - T03 Command bar UI states and mock submit flow
 - In progress:
   - None
 - Next up:
-  - T01 Bootstrap extension
-  - T02 Shortcut + toggle UI
-  - T03 UI state machine
+  - T04 Shared types + strict action schema
+  - T05 Core executor actions
+  - T06 Extraction action with fallback
 
 ## 11) Work Log
 - 2026-02-21:
   - Created `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md`.
   - Created `/Users/marcoshernanz/dev/hackeurope2/PLAN.md` with full implementation roadmap.
-  - Pending implementation starts at T01.
+  - Created extension scaffold: `/Users/marcoshernanz/dev/hackeurope2/manifest.json`, `/Users/marcoshernanz/dev/hackeurope2/package.json`, `/Users/marcoshernanz/dev/hackeurope2/tsconfig.json`.
+  - Implemented baseline runtime: `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts`.
+  - Added command bar styling and static copy build step: `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`, `/Users/marcoshernanz/dev/hackeurope2/scripts/copy-static.mjs`.
+  - Verified `npm run build` and generated loadable `/Users/marcoshernanz/dev/hackeurope2/dist`.
+  - Added `/Users/marcoshernanz/dev/hackeurope2/.gitignore` for build/runtime artifacts.
 
 ## 12) Risk & Fallback Matrix
 
@@ -216,6 +223,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Implement T01-T03 and validate command bar UX.
-2. Implement T04-T08 to achieve deterministic on-page control.
-3. Integrate Claude loop (T09-T12) and test with simple prompts before domain flows.
+1. Implement T04-T08 to achieve deterministic on-page control.
+2. Integrate Claude loop (T09-T12) and test with simple prompts before domain flows.
+3. Build HN/Gmail domain adapters and run demo acceptance tests (T13-T15, T21-T22).
