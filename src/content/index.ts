@@ -1,21 +1,60 @@
+import { parseActionBatch } from "../shared/actions";
+import type {
+  ExecuteActionsMessage,
+  ExecuteActionsResponse,
+  RuntimeMessage,
+  SubmitTaskMessage,
+  SubmitTaskResponse
+} from "../shared/messages";
+import { executeActions } from "./executor/runner";
 import { CommandBar } from "./ui/commandBar";
-import type { RuntimeMessage, SubmitTaskMessage, SubmitTaskResponse } from "../shared/messages";
 
-const commandBar = new CommandBar(handleSubmitTask);
-
-chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
-  if (message.type !== "ui/toggle-command-bar") {
-    return;
+declare global {
+  interface Window {
+    __nwaInitialized?: boolean;
   }
+}
 
-  commandBar.toggle();
-});
+if (!window.__nwaInitialized) {
+  window.__nwaInitialized = true;
+  initializeContentScript();
+}
 
-async function handleSubmitTask(prompt: string): Promise<void> {
+function initializeContentScript(): void {
+  let commandBar: CommandBar;
+  commandBar = new CommandBar(async (prompt: string) => handleSubmitTask(commandBar, prompt));
+
+  chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+    if (message.type === "ui/toggle-command-bar") {
+      commandBar.toggle();
+      return;
+    }
+
+    if (message.type !== "executor/execute-actions") {
+      return;
+    }
+
+    void handleExecuteActionsMessage(message)
+      .then((response) => {
+        sendResponse(response);
+      })
+      .catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          payload: {
+            results: [],
+            error: error instanceof Error ? error.message : "Executor crashed"
+          }
+        });
+      });
+
+    return true;
+  });
+}
+
+async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise<void> {
   commandBar.setState("planning");
-
-  const planningDelay = sleep(150);
-  await planningDelay;
+  await sleep(120);
 
   commandBar.setState("executing");
 
@@ -29,7 +68,7 @@ async function handleSubmitTask(prompt: string): Promise<void> {
   });
 
   commandBar.setState("summarizing");
-  await sleep(150);
+  await sleep(100);
 
   if (!response?.ok) {
     commandBar.setState("error");
@@ -39,6 +78,27 @@ async function handleSubmitTask(prompt: string): Promise<void> {
 
   commandBar.setState("done");
   commandBar.setOutput(response.payload.summary ?? "No summary returned.");
+}
+
+async function handleExecuteActionsMessage(message: ExecuteActionsMessage): Promise<ExecuteActionsResponse> {
+  const validation = parseActionBatch(message.payload.actions, message.payload.limits?.maxActionsPerBatch);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      payload: {
+        results: [],
+        error: validation.error
+      }
+    };
+  }
+
+  const results = await executeActions(validation.value, message.payload.limits);
+  return {
+    ok: true,
+    payload: {
+      results
+    }
+  };
 }
 
 function sleep(ms: number): Promise<void> {

@@ -54,11 +54,11 @@
 | T01 | P0 | DONE | Bootstrap extension (MV3, TS build, folder structure) | 30m | None | Extension loads in Chrome, content + background scripts active |
 | T02 | P0 | DONE | Implement keyboard shortcut + command bar toggle | 30m | T01 | `Cmd/Ctrl+Shift+K` opens/closes bottom bar on supported pages |
 | T03 | P0 | DONE | Build command bar UI states (`idle/planning/executing/summarizing/done/error`) | 45m | T02 | UI renders state transitions and response panel |
-| T04 | P0 | TODO | Define shared types and strict action schema | 45m | T01 | Typed schema for all actions + runtime validation |
-| T05 | P0 | TODO | Implement core executor actions (`CLICK`, `WAIT_FOR`, `BACK`, `SCROLL`) | 1h | T04 | Actions execute with success/error result payloads |
-| T06 | P0 | TODO | Implement extraction action (`EXTRACT_TEXT`) with fallback strategy | 45m | T05 | Extracts meaningful text from current page with truncation |
+| T04 | P0 | DONE | Define shared types and strict action schema | 45m | T01 | Typed schema for all actions + runtime validation |
+| T05 | P0 | DONE | Implement core executor actions (`CLICK`, `WAIT_FOR`, `BACK`, `SCROLL`) | 1h | T04 | Actions execute with success/error result payloads |
+| T06 | P0 | DONE | Implement extraction action (`EXTRACT_TEXT`) with fallback strategy | 45m | T05 | Extracts meaningful text from current page with truncation |
 | T07 | P0 | TODO | Implement visible cursor + click pulse overlay animation | 45m | T05 | User can see fast human-like movement and clicks |
-| T08 | P0 | TODO | Add retry/timeout guardrails and hard execution caps | 45m | T05,T06 | Failed actions retry once; loop exits safely with explicit error |
+| T08 | P0 | DONE | Add retry/timeout guardrails and hard execution caps | 45m | T05,T06 | Failed actions retry once; loop exits safely with explicit error |
 | T09 | P0 | TODO | Implement Claude client (background worker) with env config | 45m | T01 | Claude API call works and returns parsed payload |
 | T10 | P0 | TODO | Implement planner prompt contract (strict JSON only) | 45m | T09,T04 | Planner returns valid constrained action list |
 | T11 | P0 | TODO | Implement iterative plan-execute loop across background/content | 1h | T10,T05,T06 | Loop runs until `DONE` or hard limit |
@@ -188,19 +188,23 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-21
-- Current phase: Foundation complete (T01-T03)
+- Current phase: Executor core mostly complete (T01-T06, T08)
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
   - T01 Bootstrap extension scaffold
   - T02 Keyboard shortcut + command bar toggle
   - T03 Command bar UI states and mock submit flow
-- In progress:
-  - None
-- Next up:
   - T04 Shared types + strict action schema
   - T05 Core executor actions
   - T06 Extraction action with fallback
+  - T08 Retry/timeout guardrails + action caps
+- In progress:
+  - None
+- Next up:
+  - T07 Visible cursor + click pulse animation
+  - T09 Claude client integration
+  - T10 Planner prompt contract
 
 ## 11) Work Log
 - 2026-02-21:
@@ -213,6 +217,15 @@ Each action payload includes:
   - Added `/Users/marcoshernanz/dev/hackeurope2/.gitignore` for build/runtime artifacts.
   - Fixed runtime injection error by switching to bundled non-module output for content/background scripts and updating `/Users/marcoshernanz/dev/hackeurope2/manifest.json` background worker mode.
   - Re-verified with `npm run build` and `npm run typecheck`.
+  - Added strict action schema and runtime batch validation in `/Users/marcoshernanz/dev/hackeurope2/src/shared/actions.ts`.
+  - Expanded message contracts for background-content executor communication in `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`.
+  - Implemented deterministic action executor (click/wait/back/scroll/extract/list/done) with retries, per-action timeouts, and caps in `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts`.
+  - Wired content script executor message handling in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
+  - Replaced mock-only submit handler with background deterministic planning + execution summary in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+  - Re-verified all updates with `npm run typecheck` and `npm run build`.
+  - Fixed shortcut toggle reliability for tabs without an active content receiver by adding scriptable URL guards, on-demand content injection, and silent handling of expected no-receiver cases in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+  - Added a singleton initialization guard in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts` to prevent duplicate command bar instances after reinjection/reload.
+  - Re-verified stabilization updates with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -225,6 +238,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Implement T04-T08 to achieve deterministic on-page control.
-2. Integrate Claude loop (T09-T12) and test with simple prompts before domain flows.
-3. Build HN/Gmail domain adapters and run demo acceptance tests (T13-T15, T21-T22).
+1. Implement T07 visible cursor + click pulse so navigation appears human-like and fast.
+2. Integrate Claude loop (T09-T12) and keep deterministic planner fallback active.
+3. Build HN/Gmail multi-step adapters and run demo acceptance tests (T13-T15, T21-T22).
