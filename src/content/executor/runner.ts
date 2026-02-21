@@ -6,6 +6,7 @@ import {
   type ListedItem,
   type TargetSpec
 } from "../../shared/actions";
+import { getVisualCursor } from "../dom/visualCursor";
 
 const NON_RETRYABLE_ACTIONS = new Set<AgentAction["type"]>(["OPEN_IN_SAME_TAB", "BACK", "DONE"]);
 
@@ -102,6 +103,11 @@ async function executeAction(
         throw new Error("No list items found");
       }
 
+      const previewTarget = findTargetElement(action.target);
+      if (previewTarget) {
+        await animateHumanInspect(previewTarget);
+      }
+
       return {
         items,
         selectorUsed: selectors[0]
@@ -115,7 +121,9 @@ async function executeAction(
       }
 
       scrollIntoViewIfNeeded(element);
+      await animateHumanClick(element);
       triggerClick(element);
+      await sleep(randomBetween(20, 50));
 
       return {
         selectorUsed: action.target?.selectors?.[0]
@@ -123,9 +131,15 @@ async function executeAction(
     }
 
     case "OPEN_IN_SAME_TAB": {
-      const targetUrl = action.target?.url ?? getAnchorHref(findTargetElement(action.target));
+      const targetElement = findTargetElement(action.target);
+      const targetUrl = action.target?.url ?? getAnchorHref(targetElement);
       if (!targetUrl) {
         throw new Error("Open target URL not found");
+      }
+
+      if (targetElement) {
+        scrollIntoViewIfNeeded(targetElement);
+        await animateHumanClick(targetElement);
       }
 
       window.location.href = targetUrl;
@@ -155,6 +169,11 @@ async function executeAction(
     }
 
     case "EXTRACT_TEXT": {
+      const previewTarget = findTargetElement(action.target);
+      if (previewTarget) {
+        await animateHumanInspect(previewTarget);
+      }
+
       const maxChars = clampNumber(action.params?.maxChars ?? 2000, 200, limits.maxExtractChars);
       const text = extractText(action.target, maxChars);
       if (!text) {
@@ -322,6 +341,26 @@ function mergeLimits(customLimits?: Partial<ExecutionLimits>): ExecutionLimits {
   };
 }
 
+async function animateHumanClick(element: Element): Promise<void> {
+  try {
+    const cursor = getVisualCursor();
+    await cursor.moveToElement(element);
+    await cursor.pulse();
+  } catch {
+    // Animation failures should never block action execution.
+  }
+}
+
+async function animateHumanInspect(element: Element): Promise<void> {
+  try {
+    const cursor = getVisualCursor();
+    await cursor.moveToElement(element);
+    await sleep(randomBetween(25, 60));
+  } catch {
+    // Animation failures should never block action execution.
+  }
+}
+
 async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: number | undefined;
 
@@ -342,6 +381,10 @@ async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promis
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function randomBetween(min: number, max: number): number {
+  return Math.random() * (max - min) + min;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -57,14 +57,14 @@
 | T04 | P0 | DONE | Define shared types and strict action schema | 45m | T01 | Typed schema for all actions + runtime validation |
 | T05 | P0 | DONE | Implement core executor actions (`CLICK`, `WAIT_FOR`, `BACK`, `SCROLL`) | 1h | T04 | Actions execute with success/error result payloads |
 | T06 | P0 | DONE | Implement extraction action (`EXTRACT_TEXT`) with fallback strategy | 45m | T05 | Extracts meaningful text from current page with truncation |
-| T07 | P0 | TODO | Implement visible cursor + click pulse overlay animation | 45m | T05 | User can see fast human-like movement and clicks |
+| T07 | P0 | DONE | Implement visible cursor + click pulse overlay animation | 45m | T05 | User can see fast human-like movement and clicks |
 | T08 | P0 | DONE | Add retry/timeout guardrails and hard execution caps | 45m | T05,T06 | Failed actions retry once; loop exits safely with explicit error |
 | T09 | P0 | TODO | Implement Claude client (background worker) with env config | 45m | T01 | Claude API call works and returns parsed payload |
 | T10 | P0 | TODO | Implement planner prompt contract (strict JSON only) | 45m | T09,T04 | Planner returns valid constrained action list |
 | T11 | P0 | TODO | Implement iterative plan-execute loop across background/content | 1h | T10,T05,T06 | Loop runs until `DONE` or hard limit |
 | T12 | P0 | TODO | Implement final summarizer pass + response rendering | 45m | T11 | Final answer shown with structure and source list |
-| T13 | P0 | TODO | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
-| T14 | P0 | TODO | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
+| T13 | P0 | IN_PROGRESS | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
+| T14 | P0 | IN_PROGRESS | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
 | T15 | P0 | TODO | Harden Gmail selectors with fallback chains | 45m | T14 | Works across minor DOM variation in mailbox view |
 | T16 | P1 | TODO | Add compact context builder (URL/title/candidates/snippets only) | 45m | T11 | Token usage reduced; loop remains stable |
 | T17 | P1 | TODO | Add execution trace panel (“show steps”) | 45m | T03,T11 | User can inspect steps after run |
@@ -188,7 +188,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-21
-- Current phase: Executor core mostly complete (T01-T06, T08)
+- Current phase: Domain adapters in progress (T13-T14)
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -198,13 +198,15 @@ Each action payload includes:
   - T04 Shared types + strict action schema
   - T05 Core executor actions
   - T06 Extraction action with fallback
+  - T07 Visible cursor + click pulse animation
   - T08 Retry/timeout guardrails + action caps
 - In progress:
-  - None
+  - T13 Hacker News adapter (multi-page navigation loop)
+  - T14 Gmail adapter (unread thread open/read/back loop)
 - Next up:
-  - T07 Visible cursor + click pulse animation
   - T09 Claude client integration
   - T10 Planner prompt contract
+  - T11 Iterative plan-execute orchestration
 
 ## 11) Work Log
 - 2026-02-21:
@@ -226,6 +228,19 @@ Each action payload includes:
   - Fixed shortcut toggle reliability for tabs without an active content receiver by adding scriptable URL guards, on-demand content injection, and silent handling of expected no-receiver cases in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
   - Added a singleton initialization guard in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts` to prevent duplicate command bar instances after reinjection/reload.
   - Re-verified stabilization updates with `npm run typecheck` and `npm run build`.
+  - Implemented fast human-like cursor motion and click pulse overlay in `/Users/marcoshernanz/dev/hackeurope2/src/content/dom/visualCursor.ts`.
+  - Integrated visual cursor animation into click/open executor actions in `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts`.
+  - Added cursor/ripple styling for the injected overlay in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`.
+  - Re-verified animation updates with `npm run typecheck` and `npm run build`.
+  - Expanded cursor visibility by animating inspection movement on `LIST_ITEMS`/`EXTRACT_TEXT` actions so demo flows without click actions still show visible motion.
+  - Increased cursor size/contrast in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css` for clearer live-demo visibility.
+  - Re-verified cursor visibility updates with `npm run typecheck` and `npm run build`.
+  - Fixed cursor visibility bug by positioning visual cursor/ripple at viewport origin (`left/top: 0`) so transform coordinates place the overlay onscreen.
+  - Reworked `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` from single-batch mock behavior to deterministic multi-step flows:
+    - Hacker News loop: list top links, navigate each article, extract text, return to list.
+    - Gmail loop: wait unread row, click first unread, extract thread context, back to inbox.
+  - Added robust execution retries across navigation boundaries by reinjecting content script on no-receiver message errors during action batch execution.
+  - Re-verified flow upgrades with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -238,6 +253,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Implement T07 visible cursor + click pulse so navigation appears human-like and fast.
-2. Integrate Claude loop (T09-T12) and keep deterministic planner fallback active.
-3. Build HN/Gmail multi-step adapters and run demo acceptance tests (T13-T15, T21-T22).
+1. Integrate Claude loop (T09-T12) and keep deterministic planner fallback active.
+2. Validate and harden current HN/Gmail multi-step loops with manual runs and selector fallback tweaks.
+3. Build demo acceptance scripts and run repeatability checks (T21-T24).
