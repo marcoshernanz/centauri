@@ -48,6 +48,23 @@
   color: #7dd3fc;
 }
 
+.nwa-progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.nwa-progress {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #22d3ee);
+  border-radius: 999px;
+  transition: width 160ms ease;
+}
+
 .nwa-output {
   max-height: 220px;
   overflow: auto;
@@ -61,12 +78,23 @@
   line-height: 1.4;
 }
 
+.nwa-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .nwa-root[data-state="error"] .nwa-status {
   color: #fca5a5;
 }
 
 .nwa-root[data-state="done"] .nwa-status {
   color: #86efac;
+}
+
+.nwa-root[data-state="error"] .nwa-progress {
+  background: linear-gradient(90deg, #f87171, #ef4444);
 }
 
 .nwa-visual-cursor {

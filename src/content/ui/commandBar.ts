@@ -15,6 +15,8 @@ export class CommandBar {
   private readonly root: HTMLDivElement;
   private readonly input: HTMLInputElement;
   private readonly status: HTMLSpanElement;
+  private readonly hint: HTMLSpanElement;
+  private readonly progress: HTMLDivElement;
   private readonly output: HTMLPreElement;
   private readonly form: HTMLFormElement;
   private isOpen = false;
@@ -38,6 +40,16 @@ export class CommandBar {
     this.status.className = "nwa-status";
     this.status.textContent = STATE_LABEL.idle;
 
+    this.hint = document.createElement("span");
+    this.hint.className = "nwa-hint";
+    this.hint.textContent = "Enter to run | Esc to close";
+
+    const progressTrack = document.createElement("div");
+    progressTrack.className = "nwa-progress-track";
+    this.progress = document.createElement("div");
+    this.progress.className = "nwa-progress";
+    progressTrack.appendChild(this.progress);
+
     this.output = document.createElement("pre");
     this.output.className = "nwa-output";
     this.output.textContent = "";
@@ -45,11 +57,20 @@ export class CommandBar {
     this.form.appendChild(this.input);
     this.form.appendChild(this.status);
     this.root.appendChild(this.form);
+    this.root.appendChild(progressTrack);
     this.root.appendChild(this.output);
+    this.root.appendChild(this.hint);
 
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.handleSubmit();
+    });
+
+    this.input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.close();
+      }
     });
 
     document.documentElement.appendChild(this.root);
@@ -79,10 +100,15 @@ export class CommandBar {
   setState(state: UIState): void {
     this.status.textContent = STATE_LABEL[state];
     this.root.dataset.state = state;
+    this.progress.style.width = `${this.getProgressPercent(state)}%`;
   }
 
   setOutput(text: string): void {
     this.output.textContent = text;
+  }
+
+  clearOutput(): void {
+    this.output.textContent = "";
   }
 
   private async handleSubmit(): Promise<void> {
@@ -94,5 +120,24 @@ export class CommandBar {
     }
 
     await this.onSubmit(prompt);
+  }
+
+  private getProgressPercent(state: UIState): number {
+    switch (state) {
+      case "idle":
+        return 0;
+      case "planning":
+        return 24;
+      case "executing":
+        return 68;
+      case "summarizing":
+        return 88;
+      case "done":
+        return 100;
+      case "error":
+        return 100;
+      default:
+        return 0;
+    }
   }
 }

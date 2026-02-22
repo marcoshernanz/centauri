@@ -8,7 +8,9 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:demo:hn": "bash scripts/e2e_hn_demo.sh",
-    "test:demo:gmail": "bash scripts/e2e_gmail_demo.sh"
+    "test:demo:gmail": "bash scripts/e2e_gmail_demo.sh",
+    "test:perf": "bash scripts/perf_tune_check.sh",
+    "test:rehearsal": "bash scripts/rehearsal_check.sh"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.30",

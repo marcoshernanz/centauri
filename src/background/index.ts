@@ -17,6 +17,8 @@ import {
   buildGmailSummaryPrompt,
   buildGenericSummaryPrompt,
   buildHackerNewsSummaryPrompt,
+  buildPlannerRepairSystemPrompt,
+  buildPlannerRepairUserPrompt,
   buildPlannerSystemPrompt,
   buildPlannerUserPrompt,
   buildSummarySystemPrompt
@@ -28,6 +30,12 @@ const DEFAULT_TARGET_COUNT = 5;
 const MAX_TARGET_COUNT = 5;
 const HN_HOME_URL = "https://news.ycombinator.com/";
 const GMAIL_INBOX_URL = "https://mail.google.com/mail/u/0/#inbox";
+const TRANSIENT_EXECUTOR_ERROR_PATTERNS = [
+  "No response from executor",
+  "Failed to communicate with content script",
+  "Failed after reinjection",
+  "Action timed out"
+] as const;
 const GMAIL_UNREAD_WAIT_SELECTORS = [
   "tr.zA.zE",
   "tr.zE",
@@ -150,7 +158,7 @@ async function runHackerNewsFlow(
 ): Promise<SubmitTaskResponse> {
   const allResults: ActionExecutionResult[] = [];
 
-  const ensured = await ensureTabOnUrl(tabId, "news.ycombinator.com", HN_HOME_URL);
+  const ensured = await ensureTabOnUrl(tabId, "news.ycombinator.com", HN_HOME_URL, agentConfig);
   if (!ensured) {
     return toError("Failed to open Hacker News", allResults);
   }
@@ -168,7 +176,7 @@ async function runHackerNewsFlow(
       target: { selectors: [".athing .titleline > a"] },
       params: { limit: targetCount }
     }
-  ]);
+  ], agentConfig);
 
   allResults.push(...listOutcome.payload.results);
 
@@ -192,7 +200,7 @@ async function runHackerNewsFlow(
       continue;
     }
 
-    const navigated = await navigateTab(tabId, url);
+    const navigated = await navigateTab(tabId, url, agentConfig);
     if (!navigated) {
       articleSummaries.push({ title: item.text, url, preview: "Navigation failed", ok: false });
       continue;
@@ -211,7 +219,7 @@ async function runHackerNewsFlow(
         target: { selectors: ["article", "main", "[role='main']", "body"] },
         params: { maxChars: 3800 }
       }
-    ]);
+    ], agentConfig);
 
     allResults.push(...extractOutcome.payload.results);
 
@@ -223,7 +231,7 @@ async function runHackerNewsFlow(
       ok: extractOutcome.ok && extractedText.length > 0
     });
 
-    const returned = await navigateTab(tabId, HN_HOME_URL);
+    const returned = await navigateTab(tabId, HN_HOME_URL, agentConfig);
     if (!returned) {
       articleSummaries.push({
         title: item.text,
@@ -241,7 +249,7 @@ async function runHackerNewsFlow(
         target: { selectors: [".athing .titleline > a", "body"] },
         params: { timeoutMs: 1500 }
       }
-    ]);
+    ], agentConfig);
     allResults.push(...returnOutcome.payload.results);
   }
 
@@ -280,7 +288,7 @@ async function runGmailFlow(
 ): Promise<SubmitTaskResponse> {
   const allResults: ActionExecutionResult[] = [];
 
-  const ensured = await ensureTabOnUrl(tabId, "mail.google.com", GMAIL_INBOX_URL);
+  const ensured = await ensureTabOnUrl(tabId, "mail.google.com", GMAIL_INBOX_URL, agentConfig);
   if (!ensured) {
     return toError("Failed to open Gmail", allResults);
   }
@@ -323,7 +331,7 @@ async function runGmailFlow(
         target: { selectors: [...GMAIL_INBOX_RETURN_WAIT_SELECTORS] },
         params: { timeoutMs: 2200 }
       }
-    ]);
+    ], agentConfig);
 
     allResults.push(...outcome.payload.results);
 
@@ -393,7 +401,7 @@ async function runGenericFlow(
       target: { selectors: ["article", "main", "[role='main']", "body"] },
       params: { maxChars: 2000 }
     }
-  ]);
+  ], agentConfig);
 
   if (!outcome.ok) {
     return toError(outcome.payload.error ?? "Generic extraction failed", outcome.payload.results);
@@ -433,6 +441,8 @@ async function runClaudePlannerLoop(
 ): Promise<SubmitTaskResponse | null> {
   const allResults: ActionExecutionResult[] = [];
   let latestExtract = "";
+  let previousActionSignature = "";
+  let consecutiveBatchFailures = 0;
 
   for (let iteration = 1; iteration <= agentConfig.claude.plannerMaxIterations; iteration += 1) {
     const plannedActions = await planActionsWithClaude({
@@ -444,14 +454,21 @@ async function runClaudePlannerLoop(
       latestExtract,
       previousResults: allResults,
       maxActions: agentConfig.claude.plannerMaxActions,
-      maxTokens: agentConfig.claude.plannerMaxTokens
+      maxTokens: agentConfig.claude.plannerMaxTokens,
+      repairAttempts: agentConfig.reliability.plannerRepairAttempts
     });
 
     if (!plannedActions || plannedActions.length === 0) {
       break;
     }
 
-    const outcome = await executeActionBatch(tabId, plannedActions);
+    const actionSignature = plannedActions.map((action) => `${action.type}:${action.target?.selectors?.[0] ?? "-"}`).join("|");
+    if (actionSignature === previousActionSignature && !latestExtract) {
+      break;
+    }
+    previousActionSignature = actionSignature;
+
+    const outcome = await executeActionBatch(tabId, plannedActions, agentConfig);
     allResults.push(...outcome.payload.results);
 
     const extractedText = getExtractedText(outcome.payload.results);
@@ -459,7 +476,13 @@ async function runClaudePlannerLoop(
       latestExtract = extractedText;
     }
 
-    if (!outcome.ok || plannedActions.some((action) => action.type === "DONE")) {
+    if (!outcome.ok) {
+      consecutiveBatchFailures += 1;
+    } else {
+      consecutiveBatchFailures = 0;
+    }
+
+    if (consecutiveBatchFailures >= 2 || plannedActions.some((action) => action.type === "DONE")) {
       break;
     }
   }
@@ -500,11 +523,12 @@ async function planActionsWithClaude(input: {
   previousResults: ActionExecutionResult[];
   maxActions: number;
   maxTokens: number;
+  repairAttempts: number;
 }): Promise<AgentAction[] | null> {
   try {
     const rawResponse = await callClaude(
       input.config,
-      buildPlannerSystemPrompt(),
+      buildPlannerSystemPrompt(input.maxActions),
       buildPlannerUserPrompt({
         task: input.task,
         pageTitle: input.pageTitle,
@@ -518,7 +542,13 @@ async function planActionsWithClaude(input: {
 
     const parsed = parsePlannerResponse(rawResponse);
     if (!parsed) {
-      return null;
+      const repaired = await repairPlannerJson(input.config, rawResponse, input.maxTokens, input.maxActions, input.repairAttempts);
+      if (!repaired) {
+        return null;
+      }
+
+      const repairedValidation = parseActionBatch(repaired, input.maxActions);
+      return repairedValidation.ok ? repairedValidation.value : null;
     }
 
     const validation = parseActionBatch(parsed, input.maxActions);
@@ -530,6 +560,45 @@ async function planActionsWithClaude(input: {
   } catch {
     return null;
   }
+}
+
+async function repairPlannerJson(
+  config: ClaudeConfig,
+  rawPlannerOutput: string,
+  maxTokens: number,
+  maxActions: number,
+  attempts: number
+): Promise<AgentAction[] | null> {
+  if (attempts <= 0) {
+    return null;
+  }
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const repairedRaw = await callClaude(
+        config,
+        buildPlannerRepairSystemPrompt(),
+        buildPlannerRepairUserPrompt(rawPlannerOutput),
+        Math.max(300, Math.min(maxTokens, 900))
+      );
+
+      const repairedParsed = parsePlannerResponse(repairedRaw);
+      if (!repairedParsed) {
+        continue;
+      }
+
+      const validation = parseActionBatch(repairedParsed, maxActions);
+      if (!validation.ok) {
+        continue;
+      }
+
+      return validation.value;
+    } catch {
+      // Continue to next repair attempt.
+    }
+  }
+
+  return null;
 }
 
 function parsePlannerResponse(raw: string): unknown[] | null {
@@ -559,7 +628,7 @@ async function maybeClaudeSummarize(config: ClaudeConfig, userPrompt: string, ma
   }
 }
 
-async function executeActionBatch(tabId: number, actions: AgentAction[]): Promise<ExecuteActionsResponse> {
+async function executeActionBatch(tabId: number, actions: AgentAction[], agentConfig: AgentConfig): Promise<ExecuteActionsResponse> {
   const message: ExecuteActionsMessage = {
     type: "executor/execute-actions",
     payload: {
@@ -568,13 +637,24 @@ async function executeActionBatch(tabId: number, actions: AgentAction[]): Promis
       limits: {
         ...DEFAULT_EXECUTION_LIMITS,
         maxActionsPerBatch: 8,
-        maxActionTimeoutMs: 3200,
-        maxWaitForMs: 3200
+        maxActionTimeoutMs: agentConfig.runtime.actionTimeoutMs,
+        maxWaitForMs: agentConfig.runtime.waitTimeoutMs
       }
     }
   };
 
-  return sendExecuteRequest(tabId, message);
+  let response = await sendExecuteRequest(tabId, message);
+
+  for (let attempt = 0; attempt < agentConfig.runtime.executorRetryAttempts; attempt += 1) {
+    if (response.ok || !isTransientExecutorError(response.payload.error)) {
+      break;
+    }
+
+    await sleep(90);
+    response = await sendExecuteRequest(tabId, message);
+  }
+
+  return response;
 }
 
 async function sendExecuteRequest(tabId: number, message: ExecuteActionsMessage): Promise<ExecuteActionsResponse> {
@@ -638,7 +718,7 @@ async function sendExecuteRequest(tabId: number, message: ExecuteActionsMessage)
   }
 }
 
-async function ensureTabOnUrl(tabId: number, hostContains: string, fallbackUrl: string): Promise<boolean> {
+async function ensureTabOnUrl(tabId: number, hostContains: string, fallbackUrl: string, agentConfig?: AgentConfig): Promise<boolean> {
   const tab = await chrome.tabs.get(tabId);
   const currentUrl = tab.url ?? "";
 
@@ -646,19 +726,20 @@ async function ensureTabOnUrl(tabId: number, hostContains: string, fallbackUrl: 
     return true;
   }
 
-  return navigateTab(tabId, fallbackUrl);
+  return navigateTab(tabId, fallbackUrl, agentConfig);
 }
 
-async function navigateTab(tabId: number, url: string): Promise<boolean> {
+async function navigateTab(tabId: number, url: string, agentConfig?: AgentConfig): Promise<boolean> {
   try {
     await chrome.tabs.update(tabId, { url });
-    return waitForTabReady(tabId, 5500, url);
+    const runtimeConfig = agentConfig ?? (await loadAgentConfig());
+    return waitForTabReady(tabId, runtimeConfig.runtime.tabReadyTimeoutMs, runtimeConfig.runtime.tabPollIntervalMs, url);
   } catch {
     return false;
   }
 }
 
-async function waitForTabReady(tabId: number, timeoutMs: number, expectedUrl?: string): Promise<boolean> {
+async function waitForTabReady(tabId: number, timeoutMs: number, pollIntervalMs: number, expectedUrl?: string): Promise<boolean> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt <= timeoutMs) {
@@ -674,10 +755,18 @@ async function waitForTabReady(tabId: number, timeoutMs: number, expectedUrl?: s
       return false;
     }
 
-    await sleep(120);
+    await sleep(pollIntervalMs);
   }
 
   return false;
+}
+
+function isTransientExecutorError(errorMessage: string | undefined): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+
+  return TRANSIENT_EXECUTOR_ERROR_PATTERNS.some((pattern) => errorMessage.includes(pattern));
 }
 
 function getListedItems(results: ActionExecutionResult[]): ListedItem[] {

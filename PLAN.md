@@ -69,12 +69,12 @@
 | T16 | P1 | TODO | Add compact context builder (URL/title/candidates/snippets only) | 45m | T11 | Token usage reduced; loop remains stable |
 | T17 | P1 | TODO | Add execution trace panel (“show steps”) | 45m | T03,T11 | User can inspect steps after run |
 | T18 | P1 | TODO | Add partial success UX and clear fallback messaging | 30m | T08,T12 | Partial outputs clearly labeled and useful |
-| T19 | P1 | TODO | Performance pass (wait tuning, extraction caps, context trimming) | 1h | T13,T14,T16 | End-to-end runtime materially reduced |
-| T20 | P1 | TODO | Reliability pass (invalid JSON repair + retry policy) | 45m | T10,T11 | Parser failures recovered in most cases |
+| T19 | P1 | DONE | Performance pass (wait tuning, extraction caps, context trimming) | 1h | T13,T14,T16 | End-to-end runtime materially reduced |
+| T20 | P1 | DONE | Reliability pass (invalid JSON repair + retry policy) | 45m | T10,T11 | Parser failures recovered in most cases |
 | T21 | P0 | DONE | End-to-end test script for Hacker News demo | 30m | T13,T12 | Reproducible green run with expected output quality |
 | T22 | P0 | DONE | End-to-end test script for Gmail demo | 45m | T14,T12 | Reproducible green run with expected output quality |
-| T23 | P0 | TODO | Demo mode polish (copy, loading states, readable summary formatting) | 45m | T21,T22 | Demo looks intentional and understandable |
-| T24 | P0 | TODO | Final rehearsal checklist + backup prompts | 30m | T23 | One-click runbook ready for live presentation |
+| T23 | P0 | DONE | Demo mode polish (copy, loading states, readable summary formatting) | 45m | T21,T22 | Demo looks intentional and understandable |
+| T24 | P0 | DONE | Final rehearsal checklist + backup prompts | 30m | T23 | One-click runbook ready for live presentation |
 
 ## 5) Architecture Implementation Details
 
@@ -188,7 +188,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-22
-- Current phase: Domain adapters and acceptance scripts complete
+- Current phase: Demo-ready package complete
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -207,14 +207,18 @@ Each action payload includes:
   - T13 Hacker News adapter (multi-page navigation loop)
   - T14 Gmail adapter (unread thread open/read/back loop)
   - T15 Gmail selector hardening
+  - T19 Performance pass
+  - T20 Reliability pass
   - T21 Hacker News acceptance script
   - T22 Gmail acceptance script
+  - T23 Demo mode polish
+  - T24 Final rehearsal checklist + backup prompts
 - In progress:
   - None
 - Next up:
-  - T19 Performance pass
-  - T20 Reliability pass
-  - T23 Demo mode polish
+  - T16 Compact context builder (optional)
+  - T17 Execution trace panel (optional)
+  - T18 Partial-success UX refinements (optional)
 
 ## 11) Work Log
 - 2026-02-21:
@@ -277,6 +281,22 @@ Each action payload includes:
   - Added demo acceptance scripts `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_hn_demo.sh` and `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`.
   - Added npm commands in `/Users/marcoshernanz/dev/hackeurope2/package.json`: `test:demo:hn` and `test:demo:gmail`.
   - Smoke-tested scripts with non-interactive input and verified project integrity with `npm run typecheck` and `npm run build`.
+  - Completed performance and reliability pass:
+    - Added configurable runtime tuning fields in `/Users/marcoshernanz/dev/hackeurope2/agent.config.json` and `/Users/marcoshernanz/dev/hackeurope2/src/agent/claude.ts` (timeouts, poll interval, retry attempts).
+    - Wired runtime tuning into executor batch limits and navigation polling in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - Added planner JSON auto-repair flow and bounded retry policy in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` using repair prompts from `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`.
+    - Added planner loop stall protection (signature repetition + consecutive failure break) in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+  - Added performance tuning checklist script `/Users/marcoshernanz/dev/hackeurope2/scripts/perf_tune_check.sh` and npm command `test:perf` in `/Users/marcoshernanz/dev/hackeurope2/package.json`.
+  - Re-verified tuning/reliability updates with `npm run typecheck`, `npm run build`, and `npm run test:perf`.
+  - Completed demo polish in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`, and `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`:
+    - progress bar + status hints,
+    - ESC close behavior,
+    - clearer final output with runtime/action stats.
+  - Added final rehearsal deliverables:
+    - `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`
+    - `/Users/marcoshernanz/dev/hackeurope2/scripts/rehearsal_check.sh`
+    - npm command `test:rehearsal` in `/Users/marcoshernanz/dev/hackeurope2/package.json`.
+  - Re-verified polished build with `npm run typecheck`, `npm run build`, and `npm run test:rehearsal`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -289,6 +309,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Tune speed/reliability tradeoffs for live demo consistency (T19-T20).
-2. Add final demo polish in UX copy and summary formatting (T23).
-3. Create final rehearsal checklist and backup runbook (T24).
+1. Run final manual checks with `npm run test:demo:hn` and `npm run test:demo:gmail`.
+2. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.
+3. Optional post-demo enhancement: compact context builder and step trace UX (T16-T18).

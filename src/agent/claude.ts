@@ -6,6 +6,12 @@ const DEFAULT_PLANNER_MAX_ITERATIONS = 4;
 const DEFAULT_PLANNER_MAX_ACTIONS = 4;
 const DEFAULT_PLANNER_MAX_TOKENS = 700;
 const DEFAULT_SUMMARY_MAX_TOKENS = 1000;
+const DEFAULT_ACTION_TIMEOUT_MS = 2600;
+const DEFAULT_WAIT_TIMEOUT_MS = 2400;
+const DEFAULT_TAB_READY_TIMEOUT_MS = 4500;
+const DEFAULT_TAB_POLL_INTERVAL_MS = 90;
+const DEFAULT_EXECUTOR_RETRY_ATTEMPTS = 1;
+const DEFAULT_PLANNER_REPAIR_ATTEMPTS = 1;
 
 const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -19,6 +25,16 @@ type RawAgentConfig = {
     plannerMaxTokens?: unknown;
     summaryMaxTokens?: unknown;
   };
+  runtime?: {
+    actionTimeoutMs?: unknown;
+    waitTimeoutMs?: unknown;
+    tabReadyTimeoutMs?: unknown;
+    tabPollIntervalMs?: unknown;
+    executorRetryAttempts?: unknown;
+  };
+  reliability?: {
+    plannerRepairAttempts?: unknown;
+  };
 };
 
 export type AgentConfig = {
@@ -29,6 +45,16 @@ export type AgentConfig = {
     plannerMaxActions: number;
     plannerMaxTokens: number;
     summaryMaxTokens: number;
+  };
+  runtime: {
+    actionTimeoutMs: number;
+    waitTimeoutMs: number;
+    tabReadyTimeoutMs: number;
+    tabPollIntervalMs: number;
+    executorRetryAttempts: number;
+  };
+  reliability: {
+    plannerRepairAttempts: number;
   };
 };
 
@@ -125,6 +151,16 @@ async function fetchAgentConfig(): Promise<AgentConfig> {
       plannerMaxActions: DEFAULT_PLANNER_MAX_ACTIONS,
       plannerMaxTokens: DEFAULT_PLANNER_MAX_TOKENS,
       summaryMaxTokens: DEFAULT_SUMMARY_MAX_TOKENS
+    },
+    runtime: {
+      actionTimeoutMs: DEFAULT_ACTION_TIMEOUT_MS,
+      waitTimeoutMs: DEFAULT_WAIT_TIMEOUT_MS,
+      tabReadyTimeoutMs: DEFAULT_TAB_READY_TIMEOUT_MS,
+      tabPollIntervalMs: DEFAULT_TAB_POLL_INTERVAL_MS,
+      executorRetryAttempts: DEFAULT_EXECUTOR_RETRY_ATTEMPTS
+    },
+    reliability: {
+      plannerRepairAttempts: DEFAULT_PLANNER_REPAIR_ATTEMPTS
     }
   };
 
@@ -152,6 +188,16 @@ function mergeWithDefaults(raw: RawAgentConfig, defaults: AgentConfig): AgentCon
       plannerMaxActions: sanitizeInt(raw.claude?.plannerMaxActions, defaults.claude.plannerMaxActions, 1, 8),
       plannerMaxTokens: sanitizeInt(raw.claude?.plannerMaxTokens, defaults.claude.plannerMaxTokens, 200, 2000),
       summaryMaxTokens: sanitizeInt(raw.claude?.summaryMaxTokens, defaults.claude.summaryMaxTokens, 200, 4000)
+    },
+    runtime: {
+      actionTimeoutMs: sanitizeInt(raw.runtime?.actionTimeoutMs, defaults.runtime.actionTimeoutMs, 800, 6000),
+      waitTimeoutMs: sanitizeInt(raw.runtime?.waitTimeoutMs, defaults.runtime.waitTimeoutMs, 800, 6000),
+      tabReadyTimeoutMs: sanitizeInt(raw.runtime?.tabReadyTimeoutMs, defaults.runtime.tabReadyTimeoutMs, 1500, 9000),
+      tabPollIntervalMs: sanitizeInt(raw.runtime?.tabPollIntervalMs, defaults.runtime.tabPollIntervalMs, 50, 350),
+      executorRetryAttempts: sanitizeInt(raw.runtime?.executorRetryAttempts, defaults.runtime.executorRetryAttempts, 0, 3)
+    },
+    reliability: {
+      plannerRepairAttempts: sanitizeInt(raw.reliability?.plannerRepairAttempts, defaults.reliability.plannerRepairAttempts, 0, 3)
     }
   };
 }

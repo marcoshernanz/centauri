@@ -1,13 +1,13 @@
 import type { ActionExecutionResult } from "../shared/actions";
 
-export function buildPlannerSystemPrompt(): string {
+export function buildPlannerSystemPrompt(maxActions = 4): string {
   return [
     "You are a browser automation planner.",
     "Return ONLY valid JSON with this exact shape:",
     '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
     "Rules:",
     "- Use only allowed action types.",
-    "- Use 1 to 4 actions per response.",
+    `- Use 1 to ${maxActions} actions per response.`,
     "- Include DONE when enough information is gathered.",
     "- Never invent extracted text or success.",
     "- No markdown, no explanation, JSON only."
@@ -50,6 +50,25 @@ export function buildSummarySystemPrompt(): string {
     "If context is partial, explicitly say what is missing.",
     "Do not fabricate details."
   ].join("\n");
+}
+
+export function buildPlannerRepairSystemPrompt(): string {
+  return [
+    "You repair malformed browser-planner JSON.",
+    "Return ONLY valid JSON with this shape:",
+    '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
+    "Rules:",
+    "- Keep original intent, fix formatting/schema issues only.",
+    "- Remove unsupported fields or unsupported action types.",
+    "- No markdown, no explanation, JSON only."
+  ].join("\n");
+}
+
+export function buildPlannerRepairUserPrompt(rawPlannerOutput: string): string {
+  return [
+    "Repair this planner output into valid JSON:",
+    rawPlannerOutput
+  ].join("\n\n");
 }
 
 export function buildHackerNewsSummaryPrompt(task: string, snippets: Array<{ title: string; url: string; preview: string }>): string {

@@ -6,5 +6,15 @@
     "plannerMaxActions": 4,
     "plannerMaxTokens": 700,
     "summaryMaxTokens": 1000
+  },
+  "runtime": {
+    "actionTimeoutMs": 2600,
+    "waitTimeoutMs": 2400,
+    "tabReadyTimeoutMs": 4500,
+    "tabPollIntervalMs": 90,
+    "executorRetryAttempts": 1
+  },
+  "reliability": {
+    "plannerRepairAttempts": 1
   }
 }

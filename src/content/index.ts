@@ -53,6 +53,8 @@ function initializeContentScript(): void {
 }
 
 async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise<void> {
+  const startedAt = Date.now();
+  commandBar.clearOutput();
   commandBar.setState("planning");
   await sleep(120);
 
@@ -77,7 +79,7 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
   }
 
   commandBar.setState("done");
-  commandBar.setOutput(response.payload.summary ?? "No summary returned.");
+  commandBar.setOutput(formatFinalOutput(response, startedAt));
 }
 
 async function handleExecuteActionsMessage(message: ExecuteActionsMessage): Promise<ExecuteActionsResponse> {
@@ -105,4 +107,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): string {
+  const elapsedMs = Date.now() - startedAt;
+  const results = response.payload.results ?? [];
+  const okCount = results.filter((result) => result.ok).length;
+  const failCount = results.length - okCount;
+  const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+
+  const lines: string[] = [];
+  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} OK${failCount > 0 ? ` (${failCount} failed)` : ""}`);
+  lines.push("");
+  lines.push(response.payload.summary ?? "No summary returned.");
+  return lines.join("\n");
 }
