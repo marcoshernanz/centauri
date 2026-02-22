@@ -10,6 +10,8 @@ import type {
   ExecuteActionsResponse,
   RuntimeMessage,
   ShowResultMessage,
+  SynthesizeTtsMessage,
+  SynthesizeTtsResponse,
   SubmitTaskMessage,
   SubmitTaskResponse,
   UIState
@@ -28,8 +30,13 @@ import {
   buildSummarySystemPrompt
 } from "../agent/prompts";
 
+declare const __NWA_ELEVENLABS_API_KEY__: string | undefined;
+declare const __NWA_ELEVENLABS_VOICE_ID__: string | undefined;
+declare const __NWA_ELEVENLABS_SPEECH_PROFILE__: string | undefined;
+
 const TOGGLE_COMMAND = "toggle-command-bar";
 const NO_RECEIVER_ERROR_FRAGMENT = "Receiving end does not exist";
+const ELEVENLABS_ENDPOINT_BASE = "https://api.elevenlabs.io/v1/text-to-speech";
 const DEFAULT_TARGET_COUNT = 5;
 const MAX_TARGET_COUNT = 5;
 const HN_HOME_URL = "https://news.ycombinator.com/";
@@ -166,8 +173,26 @@ chrome.runtime.onMessage.addListener(
   (
     message: RuntimeMessage,
     sender: chrome.runtime.MessageSender,
-    sendResponse: (response: SubmitTaskResponse) => void
+    sendResponse: (response: SubmitTaskResponse | SynthesizeTtsResponse) => void
   ) => {
+    if (message.type === "tts/synthesize") {
+      void handleTtsSynthesize(message)
+        .then((response) => {
+          sendResponse(response);
+        })
+        .catch((error: unknown) => {
+          console.error("tts/synthesize failed", error);
+          sendResponse({
+            ok: false,
+            payload: {
+              error: "Unexpected TTS synthesis error"
+            }
+          });
+        });
+
+      return true;
+    }
+
     if (message.type !== "agent/submit-task") {
       return;
     }
@@ -1180,6 +1205,100 @@ async function maybeClaudeSummarize(config: ClaudeConfig, userPrompt: string, ma
   } catch {
     return null;
   }
+}
+
+async function handleTtsSynthesize(message: SynthesizeTtsMessage): Promise<SynthesizeTtsResponse> {
+  const apiKey = (__NWA_ELEVENLABS_API_KEY__ ?? "").trim();
+  const voiceId = (__NWA_ELEVENLABS_VOICE_ID__ ?? "").trim();
+  const speechProfile = (__NWA_ELEVENLABS_SPEECH_PROFILE__ ?? "eleven_multilingual_v2").trim() || "eleven_multilingual_v2";
+  const text = message.payload.text.replace(/\s+/g, " ").trim().slice(0, 2800);
+
+  if (!text) {
+    return {
+      ok: false,
+      payload: {
+        error: "Missing text for TTS synthesis."
+      }
+    };
+  }
+
+  if (!apiKey || !voiceId) {
+    return {
+      ok: false,
+      payload: {
+        error: "Missing ElevenLabs configuration."
+      }
+    };
+  }
+
+  const endpoint = `${ELEVENLABS_ENDPOINT_BASE}/${encodeURIComponent(voiceId)}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "audio/mpeg",
+      "xi-api-key": apiKey
+    },
+    body: JSON.stringify({
+      text,
+      model_id: speechProfile,
+      voice_settings: {
+        stability: 0.45,
+        similarity_boost: 0.75
+      }
+    })
+  });
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const raw = await response.text();
+      if (raw.trim()) {
+        detail = raw.slice(0, 220);
+      }
+    } catch {
+      // Keep fallback status detail.
+    }
+
+    return {
+      ok: false,
+      payload: {
+        error: `ElevenLabs TTS request failed: ${detail}`
+      }
+    };
+  }
+
+  const audioBlob = await response.blob();
+  if (audioBlob.size === 0) {
+    return {
+      ok: false,
+      payload: {
+        error: "ElevenLabs TTS returned empty audio."
+      }
+    };
+  }
+
+  const audioBuffer = await audioBlob.arrayBuffer();
+  return {
+    ok: true,
+    payload: {
+      audioBase64: encodeArrayBufferToBase64(audioBuffer),
+      mimeType: audioBlob.type || "audio/mpeg"
+    }
+  };
+}
+
+function encodeArrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
 }
 
 async function executeActionBatch(tabId: number, actions: AgentAction[], agentConfig: AgentConfig): Promise<ExecuteActionsResponse> {

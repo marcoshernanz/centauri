@@ -1,12 +1,11 @@
 import { createRoot, type Root } from "react-dom/client";
 import type { ActionExecutionResult } from "../../shared/actions";
-import type { UIState } from "../../shared/messages";
+import type { SynthesizeTtsMessage, SynthesizeTtsResponse, UIState } from "../../shared/messages";
 import { ShellApp, type CompletedTaskModel, type MenuOption, type ShellCallbacks, type ShellViewModel } from "./shell";
 
 type SubmitHandler = (prompt: string) => Promise<void>;
 declare const __NWA_ELEVENLABS_API_KEY__: string;
 declare const __NWA_ELEVENLABS_VOICE_ID__: string;
-declare const __NWA_ELEVENLABS_SPEECH_PROFILE__: string;
 
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
@@ -79,27 +78,33 @@ export class CommandBar {
   private position: { left?: number; bottom?: number } = {};
   private readonly micSupported: boolean;
   private readonly ttsSupported: boolean;
-  private readonly elevenlabsApiKey: string;
-  private readonly elevenlabsVoiceId: string;
-  private readonly elevenlabsSpeechProfile: string;
+  private readonly elevenlabsConfigured: boolean;
+  private readonly nativeTtsSupported: boolean;
   private micActive = false;
   private micBusy = false;
   private ttsActive = false;
   private ttsBusy = false;
   private speechRecognition: SpeechRecognitionInstanceLike | null = null;
   private speechBasePrompt = "";
+  private micAutoSubmitOnEnd = false;
+  private micHeardSpeech = false;
+  private micSubmitInFlight = false;
   private ttsAudio: HTMLAudioElement | null = null;
   private ttsAudioUrl: string | null = null;
   private ttsAbortController: AbortController | null = null;
+  private ttsUtterance: SpeechSynthesisUtterance | null = null;
   private ttsRequestId = 0;
 
   constructor(onSubmit: SubmitHandler) {
     this.onSubmit = onSubmit;
     this.micSupported = Boolean(this.getSpeechRecognitionCtor());
-    this.elevenlabsApiKey = __NWA_ELEVENLABS_API_KEY__ ?? "";
-    this.elevenlabsVoiceId = __NWA_ELEVENLABS_VOICE_ID__ ?? "";
-    this.elevenlabsSpeechProfile = __NWA_ELEVENLABS_SPEECH_PROFILE__ ?? "eleven_multilingual_v2";
-    this.ttsSupported = this.elevenlabsApiKey.trim().length > 0 && this.elevenlabsVoiceId.trim().length > 0;
+    this.elevenlabsConfigured =
+      (__NWA_ELEVENLABS_API_KEY__ ?? "").trim().length > 0 && (__NWA_ELEVENLABS_VOICE_ID__ ?? "").trim().length > 0;
+    this.nativeTtsSupported =
+      typeof window !== "undefined" &&
+      typeof window.speechSynthesis !== "undefined" &&
+      typeof window.SpeechSynthesisUtterance !== "undefined";
+    this.ttsSupported = this.elevenlabsConfigured || this.nativeTtsSupported;
 
     this.host = document.createElement("div");
     this.host.id = HOST_ID;
@@ -390,8 +395,10 @@ export class CommandBar {
 
     const recognition = new ctor();
     this.speechBasePrompt = this.promptDraft;
+    this.micAutoSubmitOnEnd = true;
+    this.micHeardSpeech = false;
     recognition.lang = "en-US";
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -424,12 +431,14 @@ export class CommandBar {
         return;
       }
 
+      this.micHeardSpeech = true;
       const nextPrompt = [this.speechBasePrompt, spoken].filter(Boolean).join(" ").trim();
       this.promptDraft = nextPrompt;
       this.render();
     };
 
     recognition.onerror = () => {
+      this.micAutoSubmitOnEnd = false;
       this.micActive = false;
       this.micBusy = false;
       this.speechRecognition = null;
@@ -437,10 +446,22 @@ export class CommandBar {
     };
 
     recognition.onend = () => {
+      const shouldAutoSubmit = this.micAutoSubmitOnEnd && this.micHeardSpeech;
+      this.micAutoSubmitOnEnd = false;
+      this.micHeardSpeech = false;
       this.micActive = false;
       this.micBusy = false;
       this.speechRecognition = null;
       this.render();
+
+      if (!shouldAutoSubmit || this.micSubmitInFlight) {
+        return;
+      }
+
+      this.micSubmitInFlight = true;
+      void this.handleSubmit(this.promptDraft).finally(() => {
+        this.micSubmitInFlight = false;
+      });
     };
 
     this.speechRecognition = recognition;
@@ -450,6 +471,8 @@ export class CommandBar {
     try {
       recognition.start();
     } catch {
+      this.micAutoSubmitOnEnd = false;
+      this.micHeardSpeech = false;
       this.micBusy = false;
       this.speechRecognition = null;
       this.render();
@@ -457,6 +480,9 @@ export class CommandBar {
   }
 
   private stopMicCapture(): void {
+    this.micAutoSubmitOnEnd = false;
+    this.micHeardSpeech = false;
+
     if (!this.speechRecognition) {
       this.micActive = false;
       this.micBusy = false;
@@ -490,7 +516,12 @@ export class CommandBar {
       return;
     }
 
-    void this.playElevenLabsAudio(text);
+    if (this.elevenlabsConfigured) {
+      void this.playElevenLabsAudio(text);
+      return;
+    }
+
+    this.playBrowserSpeech(text);
   }
 
   private stopSpeechOutput(): void {
@@ -509,6 +540,15 @@ export class CommandBar {
       this.ttsAudio.src = "";
       this.ttsAudio = null;
     }
+
+    if (this.nativeTtsSupported) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore cancel errors from browser speech synthesis.
+      }
+    }
+    this.ttsUtterance = null;
 
     this.clearTtsAudioUrl();
     this.ttsBusy = false;
@@ -567,11 +607,15 @@ export class CommandBar {
         return;
       }
 
+      const reason = error instanceof Error ? error.message : "ElevenLabs TTS failed";
+      console.error("ElevenLabs TTS failed:", reason);
+      if (this.playBrowserSpeech(normalized)) {
+        return;
+      }
+
       this.ttsBusy = false;
       this.ttsActive = false;
       this.clearTtsAudioUrl();
-      const reason = error instanceof Error ? error.message : "ElevenLabs TTS failed";
-      console.error("ElevenLabs TTS failed:", reason);
       this.render();
     } finally {
       if (this.ttsAbortController === abortController) {
@@ -581,48 +625,99 @@ export class CommandBar {
   }
 
   private async synthesizeElevenLabs(text: string, signal: AbortSignal): Promise<Blob> {
-    if (!this.elevenlabsApiKey || !this.elevenlabsVoiceId) {
+    if (!this.elevenlabsConfigured) {
       throw new Error("Missing ElevenLabs configuration.");
     }
 
-    const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.elevenlabsVoiceId)}`;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "audio/mpeg",
-        "xi-api-key": this.elevenlabsApiKey
-      },
-      body: JSON.stringify({
-        text,
-        model_id: this.elevenlabsSpeechProfile || "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.45,
-          similarity_boost: 0.75
-        }
-      }),
-      signal
+    const response = await chrome.runtime.sendMessage<SynthesizeTtsMessage, SynthesizeTtsResponse>({
+      type: "tts/synthesize",
+      payload: {
+        text
+      }
     });
 
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try {
-        const raw = await response.text();
-        if (raw.trim()) {
-          detail = raw.slice(0, 220);
-        }
-      } catch {
-        // Keep default status detail.
-      }
-      throw new Error(`ElevenLabs TTS request failed: ${detail}`);
+    if (signal.aborted) {
+      throw new Error("TTS request aborted.");
     }
 
-    const audioBlob = await response.blob();
-    if (audioBlob.size === 0) {
+    if (!response?.ok) {
+      throw new Error(response?.payload.error ?? "ElevenLabs TTS request failed.");
+    }
+
+    const audioBase64 = response.payload.audioBase64;
+    if (!audioBase64) {
+      throw new Error("ElevenLabs TTS response did not include audio.");
+    }
+
+    const audioBlob = this.decodeBase64Audio(audioBase64, response.payload.mimeType ?? "audio/mpeg");
+    if (!audioBlob || audioBlob.size === 0) {
       throw new Error("ElevenLabs TTS returned empty audio.");
     }
 
     return audioBlob;
+  }
+
+  private playBrowserSpeech(text: string): boolean {
+    if (!this.nativeTtsSupported) {
+      return false;
+    }
+
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return false;
+    }
+
+    let utterance: SpeechSynthesisUtterance;
+    try {
+      utterance = new SpeechSynthesisUtterance(normalized.slice(0, 2200));
+    } catch {
+      return false;
+    }
+
+    const requestId = this.ttsRequestId + 1;
+    this.stopSpeechOutput();
+    this.ttsRequestId = requestId;
+    this.ttsUtterance = utterance;
+    this.ttsBusy = false;
+    this.ttsActive = true;
+    this.render();
+
+    utterance.lang = "en-US";
+    utterance.rate = 1.02;
+    utterance.pitch = 1;
+
+    const cleanup = (): void => {
+      if (this.ttsUtterance === utterance) {
+        this.ttsUtterance = null;
+      }
+      if (this.ttsRequestId === requestId) {
+        this.ttsBusy = false;
+        this.ttsActive = false;
+        this.render();
+      }
+    };
+
+    utterance.onend = cleanup;
+    utterance.onerror = cleanup;
+
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+      return true;
+    } catch {
+      cleanup();
+      return false;
+    }
+  }
+
+  private decodeBase64Audio(value: string, mimeType: string): Blob {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+
+    return new Blob([bytes], { type: mimeType || "audio/mpeg" });
   }
 
   private clearTtsAudioUrl(): void {

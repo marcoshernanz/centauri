@@ -75,10 +75,27 @@ export type ExecuteActionsResponse = {
   };
 };
 
+export type SynthesizeTtsMessage = {
+  type: "tts/synthesize";
+  payload: {
+    text: string;
+  };
+};
+
+export type SynthesizeTtsResponse = {
+  ok: boolean;
+  payload: {
+    audioBase64?: string;
+    mimeType?: string;
+    error?: string;
+  };
+};
+
 export type RuntimeMessage =
   | ToggleCommandBarMessage
   | OpenCommandBarMessage
   | SetCommandStateMessage
   | ShowResultMessage
   | SubmitTaskMessage
-  | ExecuteActionsMessage;
+  | ExecuteActionsMessage
+  | SynthesizeTtsMessage;

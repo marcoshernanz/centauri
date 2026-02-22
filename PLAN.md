@@ -93,6 +93,8 @@
 | T42 | P0 | DONE | Fix false Gmail search-route failure on URL normalization mismatch | 10m | T41 | Search flow treats visible Gmail `#search/` route as valid even when Gmail rewrites encoded query characters |
 | T43 | P0 | DONE | Harden reply-editor opening and typing reliability on Gmail thread view | 20m | T41,T42 | Reply step succeeds using localized text fallback (`Reply`/`Responder`) and visible-element targeting in executor |
 | T44 | P0 | DONE | Add open-only Gmail search flow for prompt `Find the last email from amazon associates` | 20m | T41,T42 | Prompt routes to deterministic search/open flow (search box -> first result -> extract) without reply-draft requirement |
+| T45 | P0 | DONE | Fix shell text-to-speech reliability by routing ElevenLabs synthesis through background and adding browser TTS fallback | 30m | T36 | Speaker playback works even when content-script network calls fail; typecheck/build pass |
+| T46 | P0 | DONE | Auto-submit speech-to-text prompt when user stops speaking | 20m | T33 | Mic capture ends automatically and submits captured prompt without extra click; typecheck/build pass |
 
 ## 5) Architecture Implementation Details
 
@@ -257,6 +259,8 @@ Each action payload includes:
   - T42 Gmail search-route normalization fix
   - T43 Reply-editor targeting reliability fix
   - T44 Open-only Gmail last-email flow + canonical prompt update
+  - T45 TTS reliability fix via background synthesis + browser fallback
+  - T46 Speech-to-text auto-submit on natural mic end
 - In progress:
   - None
 - Next up:
@@ -438,6 +442,15 @@ Each action payload includes:
     - added prompt intent routing in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` so `Find the last email from amazon associates` runs deterministic search/open flow without reply drafting.
     - added `runGmailSearchOpenLatestFlow` in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to perform search input, open first result, and extract context.
     - updated canonical prompt/docs/scripts in `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md`, `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`, `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`, `/Users/marcoshernanz/dev/hackeurope2/scripts/perf_tune_check.sh`, `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md`, and `/Users/marcoshernanz/dev/hackeurope2/AGENTS.md`.
+  - Completed T45 TTS reliability fix:
+    - added a new runtime message contract (`tts/synthesize`) in `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`.
+    - moved ElevenLabs synthesis requests to the background worker in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` and returned base64 audio payloads to content UI.
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx` to consume background-synthesized audio and fall back to browser `speechSynthesis` when ElevenLabs fails/unavailable.
+    - re-verified with `npm run typecheck` and `npm run build`.
+  - Completed T46 speech-to-text auto-submit behavior:
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx` mic capture lifecycle to run in single-utterance mode (`continuous = false`) so recognition naturally ends after speaking pauses.
+    - added guarded auto-submit on mic `onend` when speech was captured, while preventing accidental submits on manual stop/error.
+    - re-verified with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
