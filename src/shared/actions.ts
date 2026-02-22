@@ -1,6 +1,7 @@
 export const ACTION_TYPES = [
   "LIST_ITEMS",
   "CLICK",
+  "TYPE",
   "OPEN_IN_SAME_TAB",
   "WAIT_FOR",
   "EXTRACT_TEXT",
@@ -34,6 +35,15 @@ export type ListItemsAction = ActionBase & {
 
 export type ClickAction = ActionBase & {
   type: "CLICK";
+};
+
+export type TypeAction = ActionBase & {
+  type: "TYPE";
+  params: {
+    text: string;
+    clear?: boolean;
+    submit?: boolean;
+  };
 };
 
 export type OpenInSameTabAction = ActionBase & {
@@ -80,6 +90,7 @@ export type DoneAction = ActionBase & {
 export type AgentAction =
   | ListItemsAction
   | ClickAction
+  | TypeAction
   | OpenInSameTabAction
   | WaitForAction
   | ExtractTextAction
@@ -194,6 +205,20 @@ function parseAction(input: unknown, index: number): ValidationResult<AgentActio
     const targetValidation = parseTargetSpec(input.target, input.id);
     if (!targetValidation.ok) {
       return targetValidation;
+    }
+  }
+
+  if (actionType === "TYPE") {
+    if (!isRecord(input.params) || typeof input.params.text !== "string" || input.params.text.trim().length === 0) {
+      return { ok: false, error: `Action ${input.id} TYPE requires params.text` };
+    }
+
+    if (input.params.clear !== undefined && typeof input.params.clear !== "boolean") {
+      return { ok: false, error: `Action ${input.id} TYPE params.clear must be boolean` };
+    }
+
+    if (input.params.submit !== undefined && typeof input.params.submit !== "boolean") {
+      return { ok: false, error: `Action ${input.id} TYPE params.submit must be boolean` };
     }
   }
 

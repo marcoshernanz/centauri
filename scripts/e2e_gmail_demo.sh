@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PROMPT="Give me a summary of my last 5 unread emails"
+PROMPT="Find the last email from amazon associates"
 TARGET_URL="https://mail.google.com/mail/u/0/#inbox"
 
 printf "\n[Gmail Demo Check] Building extension...\n"
@@ -30,15 +30,15 @@ cat <<CHECKLIST
 [Gmail Demo Check] Manual Steps
 1. Open chrome://extensions and click Reload on "Natural Web Agent".
 2. Open: $TARGET_URL
-3. Ensure at least 3-5 unread emails are visible.
+3. Ensure the mailbox contains at least one recent email from "Amazon Associates".
 4. Press Cmd/Ctrl+Shift+K.
 5. Run prompt exactly:
    $PROMPT
 
 Pass Criteria
 - Visible blue cursor movement appears.
-- Agent opens unread threads one by one and returns to inbox each cycle.
-- Final summary contains multiple unread-email entries and priorities.
+- Agent fills Gmail search and opens the first matching result.
+- Final summary confirms the opened email context.
 - No blocking extension errors in chrome://extensions.
 CHECKLIST
 

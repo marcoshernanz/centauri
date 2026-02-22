@@ -15,8 +15,7 @@
 ## 1) Project Snapshot
 - Goal: Chrome extension that executes natural-language web tasks with visible, human-like, very fast actions.
 - Demo-critical flows:
-  - Hacker News: summarize top 5 articles.
-  - Gmail: summarize last 5 unread emails.
+  - Gmail: find the last email from amazon associates.
 - Constraint: 12 hours total hackathon window.
 - Priority order:
   1. Human-like navigation + speed impression
@@ -27,7 +26,6 @@
 
 ### Must Have
 - Bottom command bar opens instantly via keyboard shortcut.
-- End-to-end completion for Hacker News demo prompt.
 - End-to-end completion for Gmail demo prompt.
 - Final output is concise, grounded, and clearly structured.
 - Agent actions are visible and understandable (cursor/click animation).
@@ -81,13 +79,20 @@
 | T28 | P1 | DONE | UI contrast hardening against host-page CSS overrides | 15m | T23 | Output/trace text remains readable on sites like Wikipedia |
 | T29 | P1 | DONE | Humanize deterministic summaries and run-copy tone | 30m | T12,T23 | Output avoids robotic labels and clipped ellipsis-heavy phrasing |
 | T30 | P0 | DONE | Replace local command bar with imported hackeurope UI shell while preserving backend/executor | 1h | T03,T11 | Content UI uses transplanted shell components from sibling repo; background/task execution unchanged; build + typecheck pass |
-| T31 | P0 | TODO | Re-run demo-critical acceptance checks (HN + Gmail) with transplanted shell UI in Chrome | 30m | T30,T21,T22 | Both demo prompts complete with expected summaries and no UI regressions |
+| T31 | P0 | TODO | Re-run Gmail demo-critical acceptance checks with transplanted shell UI in Chrome | 20m | T30,T22,T38 | Gmail prompt completes with expected draft insertion summary and no UI regressions |
 | T32 | P1 | TODO | Validate generic flow on 2-3 non-adapter sites with new UI and capture regressions | 30m | T30,T25,T27 | Generic summarize-top/recent prompts complete or fail-partial clearly with stable UI |
 | T33 | P0 | DONE | Fix post-merge UI regressions (logo/nav persistence/voice controls/minimized controls/border polish) | 45m | T30 | HN logo renders reliably, shell remains visible across navigation, mic+speaker are enabled, minimized action buttons are hidden, and border styling is cleaned up |
 | T34 | P1 | DONE | Refine shell visual styling (logo/send accent, inner border cleanup, bottom box removal) | 20m | T33 | Logo and send button styling match requested orange accent, inner message border removed, logo centered, and completed-state status box removed |
 | T35 | P1 | DONE | Add favicon fallback + top spacing + readable summary formatting | 20m | T34 | Shell icon resolves from page favicon with fallback, history content has better top spacing, and summary text is rendered with clearer line structure |
 | T36 | P0 | DONE | Restore Centuri logo identity and switch TTS to ElevenLabs API | 30m | T35 | Shell icon no longer uses page favicon override, and speaker playback synthesizes audio via ElevenLabs with configured voice/model env vars |
-| T37 | P1 | DONE | Add `DEMOS.md` with canonical live-demo prompts | 10m | T24 | `DEMOS.md` documents both official demos with copy-paste prompts (HN top 5 summary + Gmail triage/draft flow) |
+| T37 | P1 | DONE | Add `DEMOS.md` with canonical live-demo prompts | 10m | T24 | `DEMOS.md` documents both official demos with copy-paste prompts (HN top 5 summary + Gmail search-and-draft flow) |
+| T38 | P0 | DONE | Implement deterministic Gmail search + reply-draft flow | 1h | T14,T15 | Gmail flow can search target email, open first result, extract context, and insert a reply draft without sending; docs/scripts updated and build/typecheck pass |
+| T39 | P0 | DONE | Pivot to single Gmail-only demo prompt and remove HN demo references | 20m | T38 | Canonical demo docs/runbook/check scripts use only one Gmail search-and-draft prompt |
+| T40 | P0 | DONE | Switch canonical sender target to "Amazon Associates" and prioritize sender-filter search | 15m | T39 | Prompts/docs/scripts use Amazon Associates target; Gmail query inference prefers `from:"..."` when prompt says “from ...” |
+| T41 | P0 | DONE | Fix Gmail search-result targeting reliability (inbox reset + forced search route + first-result click) | 25m | T38,T40 | Flow always returns to inbox, fills query, routes to Gmail `#search/<query>`, clicks first result row, and then drafts reply |
+| T42 | P0 | DONE | Fix false Gmail search-route failure on URL normalization mismatch | 10m | T41 | Search flow treats visible Gmail `#search/` route as valid even when Gmail rewrites encoded query characters |
+| T43 | P0 | DONE | Harden reply-editor opening and typing reliability on Gmail thread view | 20m | T41,T42 | Reply step succeeds using localized text fallback (`Reply`/`Responder`) and visible-element targeting in executor |
+| T44 | P0 | DONE | Add open-only Gmail search flow for prompt `Find the last email from amazon associates` | 20m | T41,T42 | Prompt routes to deterministic search/open flow (search box -> first result -> extract) without reply-draft requirement |
 
 ## 5) Architecture Implementation Details
 
@@ -113,6 +118,7 @@
 ### 5.3 Action Schema (v1)
 - `LIST_ITEMS`
 - `CLICK`
+- `TYPE`
 - `OPEN_IN_SAME_TAB`
 - `WAIT_FOR`
 - `EXTRACT_TEXT`
@@ -149,6 +155,10 @@ Each action payload includes:
   - open thread
   - extract sender + subject + message body text
   - back to inbox
+- Search + draft deterministic path:
+  - fill Gmail search box with target query and submit
+  - open first result thread, extract context
+  - open reply editor and insert generated draft body (no send)
 - Robustness:
   - selector fallback chain
   - stale-element guard
@@ -182,9 +192,9 @@ Each action payload includes:
 - UI state transitions always terminate in `done` or `error`.
 
 ### 8.3 Demo Acceptance Tests
-- Hacker News prompt runs in one attempt.
-- Gmail prompt runs in one attempt on inbox with unread messages.
-- Summaries include 5 items (or explicit partial count with reason).
+- Gmail prompt runs in one attempt on inbox containing the target email.
+- Reply draft is inserted in editor and remains unsent.
+- Final output explicitly reports extracted context and draft result state.
 
 ## 9) Timeboxed Execution Schedule (12 Hours)
 
@@ -201,7 +211,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-22
-- Current phase: MVP + cross-site generalization complete
+- Current phase: MVP + Gmail search/draft demo flow complete
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -240,10 +250,17 @@ Each action payload includes:
   - T35 Favicon fallback and readability formatting pass
   - T36 Logo identity + ElevenLabs TTS integration
   - T37 Canonical demo prompts documented in `DEMOS.md`
+  - T38 Deterministic Gmail search + reply-draft flow
+  - T39 Single-demo pivot to Gmail-only prompt
+  - T40 Amazon Associates target + sender-filter query preference
+  - T41 Gmail search-result targeting reliability fix
+  - T42 Gmail search-route normalization fix
+  - T43 Reply-editor targeting reliability fix
+  - T44 Open-only Gmail last-email flow + canonical prompt update
 - In progress:
   - None
 - Next up:
-  - T31 Re-run demo-critical HN + Gmail flows in Chrome with the transplanted shell UI
+  - T31 Re-run demo-critical Gmail flow in Chrome with the transplanted shell UI
   - T32 Manual validation on 2-3 non-adapter websites and final tuning
 
 ## 11) Work Log
@@ -386,19 +403,53 @@ Each action payload includes:
     - replaced browser `speechSynthesis` fallback path with ElevenLabs API audio synthesis/playback in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx`.
     - injected ElevenLabs env vars (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_SPEECH_PROFILE`) at build time via `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
   - Re-verified T36 with `npm run typecheck` and `npm run build`.
-  - Completed T37 demo prompt documentation by adding `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md` with the two official live prompts (HN top-5 summary and Gmail triage + draft replies with no-send guardrail).
+  - Completed T37 demo prompt documentation by adding `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md` with the two official live prompts (HN top-5 summary and Gmail search-and-draft flow with no-send guardrail).
+  - Completed T38 deterministic Gmail search-and-draft demo flow:
+    - added `TYPE` action to constrained action schema and planner contract in `/Users/marcoshernanz/dev/hackeurope2/src/shared/actions.ts` and `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`.
+    - implemented text-input execution primitive (including submit support) in `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts`.
+    - added dedicated Gmail search -> open first result -> extract -> reply draft deterministic flow in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - added Claude-assisted reply-draft prompt fallback in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`.
+    - updated demo docs/checklists in `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md`, `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`, and `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`.
+  - Re-verified T38 updates with `npm run typecheck` and `npm run build`.
+  - Completed T39 single-demo pivot:
+    - switched canonical demo prompt in `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md` to Gmail-only (`In Gmail, find the last email from "Amazon Associates" and draft a reply in Spanish without sending.`).
+    - updated `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md` and `/Users/marcoshernanz/dev/hackeurope2/scripts/rehearsal_check.sh` to remove Hacker News demo references.
+    - aligned acceptance/perf scripts with the Gmail-only prompt in `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh` and `/Users/marcoshernanz/dev/hackeurope2/scripts/perf_tune_check.sh`.
+    - aligned docs/instructions in `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md` and `/Users/marcoshernanz/dev/hackeurope2/AGENTS.md`.
+  - Re-verified T39 updates with `npm run typecheck` and `npm run build`.
+  - Completed T40 sender-target update to Amazon Associates:
+    - changed Gmail default fallback query to `from:"Amazon Associates"` and improved prompt parsing for “from <sender>” in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - updated canonical prompt/docs/scripts to Amazon Associates in `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md`, `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`, `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`, `/Users/marcoshernanz/dev/hackeurope2/scripts/perf_tune_check.sh`, `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md`, and `/Users/marcoshernanz/dev/hackeurope2/AGENTS.md`.
+  - Completed T41 Gmail search reliability fix for “click first result” behavior:
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` so Gmail draft flow returns to inbox first, fills the search box, then forces deterministic search navigation via `#search/<encoded query>` before selecting results.
+    - tightened search result selectors to grid row targets and added an explicit first-result listing step before click.
+    - improved draft wording by humanizing sender-filter queries (e.g., `from:"Amazon Associates"` -> `Amazon Associates`).
+  - Re-verified T41 updates with `npm run typecheck` and `npm run build`.
+  - Completed T42 false search-route failure fix:
+    - added Gmail search-route fallback detection in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` so URL canonicalization differences no longer fail the run when `#search/` is already loaded.
+    - improved user-facing Gmail query labels in status/output messages for sender-filter searches.
+  - Re-verified T42 updates with `npm run typecheck` and `npm run build`.
+  - Completed T43 reply-editor reliability fix:
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to retry reply opening with localized text targeting (`Reply`, then `Responder`) and only mark success when typing into the editor succeeds.
+    - removed brittle intermediate list-check action in search result opening path to reduce false partials.
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts` to prioritize visible DOM candidates for target finding/query selection.
+  - Re-verified T43 updates with `npm run typecheck` and `npm run build`.
+  - Completed T44 open-only Gmail search flow and prompt update:
+    - added prompt intent routing in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` so `Find the last email from amazon associates` runs deterministic search/open flow without reply drafting.
+    - added `runGmailSearchOpenLatestFlow` in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to perform search input, open first result, and extract context.
+    - updated canonical prompt/docs/scripts in `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md`, `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`, `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`, `/Users/marcoshernanz/dev/hackeurope2/scripts/perf_tune_check.sh`, `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md`, and `/Users/marcoshernanz/dev/hackeurope2/AGENTS.md`.
 
 ## 12) Risk & Fallback Matrix
 
 | Risk | Impact | Likelihood | Mitigation | Fallback Demo Path |
 |---|---|---|---|---|
-| Gmail selectors break | High | Medium | Multi-selector chain + aria-first targeting | Reduce to top 3 unread + explicit partial mode |
+| Gmail selectors break | High | Medium | Multi-selector chain + aria-first targeting | Retry with top-1 query prompt and manually paste generated draft text |
 | Model returns invalid JSON | High | Medium | Strict parser + auto-repair retry | Deterministic hardcoded per-domain flow mode |
-| Execution too slow | High | Medium | Tight waits, text caps, fewer planner loops | Run top 3 instead of top 5 |
+| Execution too slow | High | Medium | Tight waits, text caps, fewer planner loops | Re-run the same Gmail prompt once after refresh |
 | Extraction quality low | Medium | Medium | Multiple extractors + fallback body text | Show sourced snippets + caveats |
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. T31: Re-run demo-critical checks on Hacker News and Gmail with real prompts.
+1. T31: Re-run demo-critical Gmail check with the exact canonical prompt.
 2. T32: Validate generic flow on at least three non-adapter sites (news/blog/docs) using “summarize top/recent N” prompts.
 3. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.

@@ -16,6 +16,7 @@ import type {
 } from "../shared/messages";
 import { callClaude, loadAgentConfig, loadClaudeConfig, type AgentConfig, type ClaudeConfig } from "../agent/claude";
 import {
+  buildGmailDraftReplyPrompt,
   buildGmailSummaryPrompt,
   buildGenericSummaryPrompt,
   buildGenericTraversalSummaryPrompt,
@@ -33,6 +34,7 @@ const DEFAULT_TARGET_COUNT = 5;
 const MAX_TARGET_COUNT = 5;
 const HN_HOME_URL = "https://news.ycombinator.com/";
 const GMAIL_INBOX_URL = "https://mail.google.com/mail/u/0/#inbox";
+const DEFAULT_GMAIL_DEMO_QUERY = "from:\"Amazon Associates\"";
 const GENERIC_LIST_SELECTORS = [
   "main article a[href]",
   "main h2 a[href]",
@@ -108,6 +110,44 @@ const GMAIL_INBOX_RETURN_WAIT_SELECTORS = [
   "[role='main'] table tr",
   "[role='main']"
 ] as const;
+const GMAIL_SEARCH_INPUT_SELECTORS = [
+  "input[aria-label='Search mail']",
+  "input[aria-label='Search in mail']",
+  "input[name='q']"
+] as const;
+const GMAIL_SEARCH_RESULTS_WAIT_SELECTORS = [
+  "div[role='main'] table[role='grid'] tr.zA",
+  "table[role='grid'] tr.zA",
+  "div[role='main'] tr.zA"
+] as const;
+const GMAIL_SEARCH_RESULT_CLICK_SELECTORS = [
+  "div[role='main'] table[role='grid'] tr.zA span.bog",
+  "table[role='grid'] tr.zA span.bog",
+  "div[role='main'] tr.zA span.bog",
+  "tr.zA"
+] as const;
+const GMAIL_REPLY_BUTTON_SELECTORS = [
+  "span.ams.bkH",
+  "span.ams",
+  "div[role='button'][aria-label='Reply']",
+  "div[role='button'][aria-label='Responder']",
+  "div[role='button'][aria-label*='Reply']",
+  "div[role='button'][aria-label*='Responder']",
+  "button[aria-label='Reply']",
+  "button[aria-label='Responder']",
+  "span[role='link'][aria-label='Reply']",
+  "span[role='link'][aria-label='Responder']",
+  "div[role='button'][data-tooltip*='Reply']",
+  "div[role='button'][data-tooltip*='Responder']"
+] as const;
+const GMAIL_REPLY_EDITOR_SELECTORS = [
+  "div[aria-label='Message Body']",
+  "div[aria-label='Cuerpo del mensaje']",
+  "div[role='textbox'][aria-label*='Message Body']",
+  "div[role='textbox'][aria-label*='Cuerpo del mensaje']",
+  "div[g_editable='true'][role='textbox']",
+  "div[contenteditable='true'][role='textbox']"
+] as const;
 
 chrome.commands.onCommand.addListener(async (command: string) => {
   if (command !== TOGGLE_COMMAND) {
@@ -180,7 +220,11 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   }
 
   if (isGmailTask(trimmedPrompt, message.payload.pageUrl)) {
-    response = await runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    response = isGmailDraftReplyTask(trimmedPrompt)
+      ? await runGmailSearchAndDraftFlow(tabId, trimmedPrompt, claudeConfig, agentConfig)
+      : isGmailSearchOpenTask(trimmedPrompt)
+        ? await runGmailSearchOpenLatestFlow(tabId, trimmedPrompt, agentConfig)
+        : await runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
     await pushUiResult(tabId, response, Date.now() - runStartedAt);
     return response;
   }
@@ -425,6 +469,251 @@ async function runGmailFlow(
   return toSuccess(claudeSummary ?? deterministicSummary, allResults, warnings);
 }
 
+async function runGmailSearchAndDraftFlow(
+  tabId: number,
+  prompt: string,
+  claudeConfig: ClaudeConfig | null,
+  agentConfig: AgentConfig
+): Promise<SubmitTaskResponse> {
+  const allResults: ActionExecutionResult[] = [];
+  const searchQuery = inferGmailSearchQuery(prompt);
+  const searchQueryLabel = humanizeGmailSearchQuery(searchQuery);
+
+  const ensured = await ensureTabOnUrl(tabId, "mail.google.com", GMAIL_INBOX_URL, agentConfig);
+  if (!ensured) {
+    return toError("Failed to open Gmail", allResults);
+  }
+
+  const tabBeforeSearch = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tabBeforeSearch?.url?.includes("#inbox")) {
+    const inboxReady = await navigateTab(tabId, GMAIL_INBOX_URL, agentConfig);
+    if (!inboxReady) {
+      return toError("Failed to return to Gmail inbox before search", allResults);
+    }
+  }
+
+  const searchInputOutcome = await executeActionBatch(tabId, [
+    {
+      id: "wait-search-input",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_SEARCH_INPUT_SELECTORS] },
+      params: { timeoutMs: 2600 }
+    },
+    {
+      id: "type-search-query",
+      type: "TYPE",
+      target: { selectors: [...GMAIL_SEARCH_INPUT_SELECTORS] },
+      params: {
+        text: searchQuery,
+        clear: true
+      }
+    }
+  ], agentConfig);
+
+  allResults.push(...searchInputOutcome.payload.results);
+
+  if (!searchInputOutcome.ok) {
+    return toError(`Could not fill Gmail search box with query "${searchQuery}".`, allResults);
+  }
+
+  const searchNavigationReady = await navigateTab(tabId, buildGmailSearchUrl(searchQuery), agentConfig);
+  if (!searchNavigationReady) {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+    const onSearchRoute = isGmailSearchRoute(currentTab?.url);
+    if (!onSearchRoute) {
+      return toError(`Failed to open Gmail search results for query "${searchQueryLabel}".`, allResults);
+    }
+  }
+
+  const searchAndOpenOutcome = await executeActionBatch(tabId, [
+    {
+      id: "wait-search-results",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_SEARCH_RESULTS_WAIT_SELECTORS] },
+      params: { timeoutMs: 3200 }
+    },
+    {
+      id: "open-search-result",
+      type: "CLICK",
+      target: { selectors: [...GMAIL_SEARCH_RESULT_CLICK_SELECTORS], index: 0 }
+    },
+    {
+      id: "wait-thread-after-search",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_THREAD_WAIT_SELECTORS] },
+      params: { timeoutMs: 2800 }
+    },
+    {
+      id: "extract-thread-after-search",
+      type: "EXTRACT_TEXT",
+      target: { selectors: [...GMAIL_THREAD_EXTRACT_SELECTORS] },
+      params: { maxChars: 3500 }
+    }
+  ], agentConfig);
+
+  allResults.push(...searchAndOpenOutcome.payload.results);
+
+  if (!searchAndOpenOutcome.ok) {
+    return toError(`Could not find/open Gmail results for query "${searchQueryLabel}".`, allResults);
+  }
+
+  const extractedThreadText = getExtractedText(searchAndOpenOutcome.payload.results);
+  if (!extractedThreadText) {
+    return toError(`Found a thread for "${searchQueryLabel}" but failed to extract readable content.`, allResults);
+  }
+
+  const deterministicDraft = buildGmailReplyDraft(searchQuery, extractedThreadText);
+  const claudeDraft = claudeConfig
+    ? await maybeClaudeSummarize(
+        claudeConfig,
+        buildGmailDraftReplyPrompt({
+          task: prompt,
+          searchQuery,
+          emailContext: extractedThreadText
+        }),
+        Math.min(agentConfig.claude.summaryMaxTokens, 450)
+      )
+    : null;
+  const replyDraft = finalizeDraftReply(claudeDraft ?? deterministicDraft, searchQuery);
+  const primaryDraftOutcome = await executeReplyDraftAttempt(tabId, replyDraft, agentConfig, "Reply", "en");
+  const primaryDraftInserted = didActionSucceed(primaryDraftOutcome.payload.results, "type-reply-draft-en");
+
+  if (primaryDraftInserted) {
+    allResults.push(...primaryDraftOutcome.payload.results);
+    const summary = buildGmailDraftSummary({
+      searchQuery,
+      extractedThreadText,
+      replyDraft,
+      results: allResults,
+      draftInserted: true
+    });
+    return toSuccess(summary, allResults);
+  }
+
+  const secondaryDraftOutcome = await executeReplyDraftAttempt(tabId, replyDraft, agentConfig, "Responder", "es");
+  const secondaryDraftInserted = didActionSucceed(secondaryDraftOutcome.payload.results, "type-reply-draft-es");
+
+  if (secondaryDraftInserted) {
+    allResults.push(...secondaryDraftOutcome.payload.results);
+    const summary = buildGmailDraftSummary({
+      searchQuery,
+      extractedThreadText,
+      replyDraft,
+      results: allResults,
+      draftInserted: true
+    });
+    return toSuccess(summary, allResults);
+  }
+
+  allResults.push(...primaryDraftOutcome.payload.results, ...secondaryDraftOutcome.payload.results);
+  const partialSummary = buildGmailDraftSummary({
+    searchQuery,
+    extractedThreadText,
+    replyDraft,
+    results: allResults,
+    draftInserted: false
+  });
+  return toSuccess(partialSummary, allResults, [
+    "Email content was extracted, but the reply editor was not fully automated. The draft text is included in the output."
+  ]);
+}
+
+async function runGmailSearchOpenLatestFlow(
+  tabId: number,
+  prompt: string,
+  agentConfig: AgentConfig
+): Promise<SubmitTaskResponse> {
+  const allResults: ActionExecutionResult[] = [];
+  const searchQuery = inferGmailSearchQuery(prompt);
+  const searchQueryLabel = humanizeGmailSearchQuery(searchQuery);
+
+  const ensured = await ensureTabOnUrl(tabId, "mail.google.com", GMAIL_INBOX_URL, agentConfig);
+  if (!ensured) {
+    return toError("Failed to open Gmail", allResults);
+  }
+
+  const tabBeforeSearch = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tabBeforeSearch?.url?.includes("#inbox")) {
+    const inboxReady = await navigateTab(tabId, GMAIL_INBOX_URL, agentConfig);
+    if (!inboxReady) {
+      return toError("Failed to return to Gmail inbox before search", allResults);
+    }
+  }
+
+  const searchInputOutcome = await executeActionBatch(tabId, [
+    {
+      id: "wait-search-input-open-only",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_SEARCH_INPUT_SELECTORS] },
+      params: { timeoutMs: 2600 }
+    },
+    {
+      id: "type-search-query-open-only",
+      type: "TYPE",
+      target: { selectors: [...GMAIL_SEARCH_INPUT_SELECTORS] },
+      params: {
+        text: searchQuery,
+        clear: true
+      }
+    }
+  ], agentConfig);
+
+  allResults.push(...searchInputOutcome.payload.results);
+
+  if (!searchInputOutcome.ok) {
+    return toError(`Could not fill Gmail search box with query "${searchQueryLabel}".`, allResults);
+  }
+
+  const searchNavigationReady = await navigateTab(tabId, buildGmailSearchUrl(searchQuery), agentConfig);
+  if (!searchNavigationReady) {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+    const onSearchRoute = isGmailSearchRoute(currentTab?.url);
+    if (!onSearchRoute) {
+      return toError(`Failed to open Gmail search results for query "${searchQueryLabel}".`, allResults);
+    }
+  }
+
+  const openOutcome = await executeActionBatch(tabId, [
+    {
+      id: "wait-search-results-open-only",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_SEARCH_RESULTS_WAIT_SELECTORS] },
+      params: { timeoutMs: 3200 }
+    },
+    {
+      id: "open-search-result-open-only",
+      type: "CLICK",
+      target: { selectors: [...GMAIL_SEARCH_RESULT_CLICK_SELECTORS], index: 0 }
+    },
+    {
+      id: "wait-thread-after-search-open-only",
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_THREAD_WAIT_SELECTORS] },
+      params: { timeoutMs: 2800 }
+    },
+    {
+      id: "extract-thread-after-search-open-only",
+      type: "EXTRACT_TEXT",
+      target: { selectors: [...GMAIL_THREAD_EXTRACT_SELECTORS] },
+      params: { maxChars: 2800 }
+    }
+  ], agentConfig);
+
+  allResults.push(...openOutcome.payload.results);
+
+  if (!openOutcome.ok) {
+    return toError(`Could not open the latest email for "${searchQueryLabel}".`, allResults);
+  }
+
+  const extractedThreadText = getExtractedText(openOutcome.payload.results);
+  if (!extractedThreadText) {
+    return toError(`Opened an email for "${searchQueryLabel}" but failed to extract readable content.`, allResults);
+  }
+
+  const summary = buildGmailOpenOnlySummary(searchQueryLabel, extractedThreadText, allResults);
+  return toSuccess(summary, allResults);
+}
+
 async function runGenericFlow(
   tabId: number,
   prompt: string,
@@ -496,6 +785,41 @@ async function runGenericFlow(
     : [];
 
   return toSuccess(claudeSummary ?? deterministicSummary, outcome.payload.results, warnings);
+}
+
+async function executeReplyDraftAttempt(
+  tabId: number,
+  replyDraft: string,
+  agentConfig: AgentConfig,
+  replyText: string,
+  suffix: "en" | "es"
+): Promise<ExecuteActionsResponse> {
+  return executeActionBatch(tabId, [
+    {
+      id: `click-reply-button-${suffix}`,
+      type: "CLICK",
+      target: { selectors: [...GMAIL_REPLY_BUTTON_SELECTORS], textIncludes: replyText, index: 0 }
+    },
+    {
+      id: `wait-reply-editor-${suffix}`,
+      type: "WAIT_FOR",
+      target: { selectors: [...GMAIL_REPLY_EDITOR_SELECTORS] },
+      params: { timeoutMs: 2800 }
+    },
+    {
+      id: `type-reply-draft-${suffix}`,
+      type: "TYPE",
+      target: { selectors: [...GMAIL_REPLY_EDITOR_SELECTORS], index: 0 },
+      params: {
+        text: replyDraft,
+        clear: true
+      }
+    }
+  ], agentConfig);
+}
+
+function didActionSucceed(results: ActionExecutionResult[], actionId: string): boolean {
+  return results.some((result) => result.actionId === actionId && result.ok);
 }
 
 async function runGenericTraversalFlow(
@@ -1109,6 +1433,84 @@ function buildGmailSummary(
   return lines.join("\n");
 }
 
+function buildGmailDraftSummary(input: {
+  searchQuery: string;
+  extractedThreadText: string;
+  replyDraft: string;
+  results: ActionExecutionResult[];
+  draftInserted: boolean;
+}): string {
+  const lines: string[] = [];
+  lines.push("Gmail Draft Reply");
+  lines.push(`Search query: ${humanizeGmailSearchQuery(input.searchQuery)}`);
+  lines.push("");
+  lines.push("Email Context");
+  lines.push(buildReadableHighlight(input.extractedThreadText, 45));
+  lines.push("");
+  lines.push("Draft Reply");
+  lines.push(input.replyDraft);
+  lines.push("");
+  lines.push(
+    input.draftInserted
+      ? "Status: Draft inserted in Gmail reply editor (not sent)."
+      : "Status: Reply editor step failed, but draft text is ready to paste."
+  );
+  lines.push(`Run Stats: ${countOk(input.results)}/${input.results.length} actions OK`);
+
+  return lines.join("\n");
+}
+
+function buildGmailOpenOnlySummary(searchQueryLabel: string, extractedThreadText: string, results: ActionExecutionResult[]): string {
+  const lines: string[] = [];
+  lines.push("Gmail Search Result");
+  lines.push(`Query: ${searchQueryLabel}`);
+  lines.push("");
+  lines.push("Opened Email");
+  lines.push(buildReadableHighlight(extractedThreadText, 45));
+  lines.push("");
+  lines.push("Status: First matching email opened successfully.");
+  lines.push(`Run Stats: ${countOk(results)}/${results.length} actions OK`);
+  return lines.join("\n");
+}
+
+function buildGmailReplyDraft(searchQuery: string, emailContext: string): string {
+  const queryLabel = humanizeGmailSearchQuery(searchQuery);
+  const contextLine = buildReadableHighlight(emailContext, 28);
+
+  return [
+    "Hola,",
+    "",
+    `Gracias por el correo sobre "${queryLabel}". He revisado la información y te confirmo que sigo con este tema.`,
+    `Punto principal que tengo ahora: ${contextLine}`,
+    "",
+    "Si te parece, en cuanto me confirmes el siguiente paso o el documento exacto que necesitas, te lo envío hoy mismo.",
+    "",
+    "Un saludo."
+  ].join("\n");
+}
+
+function finalizeDraftReply(value: string, searchQuery: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return buildGmailReplyDraft(searchQuery, "");
+  }
+
+  if (normalized.length < 40) {
+    return buildGmailReplyDraft(searchQuery, normalized);
+  }
+
+  return normalized;
+}
+
+function humanizeGmailSearchQuery(query: string): string {
+  const fromMatch = query.match(/^from:\s*["“”]?([^"“”]+)["“”]?$/iu);
+  if (fromMatch?.[1]) {
+    return fromMatch[1].trim();
+  }
+
+  return query.replace(/\s+/g, " ").trim();
+}
+
 function appendPriorityGroup(
   lines: string[],
   label: "High" | "Medium" | "Low",
@@ -1563,6 +1965,42 @@ function parseExplicitCount(prompt: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function buildGmailSearchUrl(query: string): string {
+  const encoded = encodeURIComponent(query.trim());
+  return `https://mail.google.com/mail/u/0/#search/${encoded}`;
+}
+
+function isGmailSearchRoute(url: string | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+
+  return url.includes("mail.google.com/mail/") && url.includes("#search/");
+}
+
+function inferGmailSearchQuery(prompt: string): string {
+  const prefersSenderFilter = /\b(from|de)\b/iu.test(prompt);
+  const quotedMatch = prompt.match(/["'“”‘’]([^"'“”‘’]{2,120})["'“”‘’]/u);
+  if (quotedMatch?.[1]) {
+    const value = quotedMatch[1].trim();
+    return prefersSenderFilter ? `from:"${value}"` : value;
+  }
+
+  const fromMatch = prompt.match(/\b(?:from|de)\s+([a-z0-9áéíóúñü.&\-_/ ]{3,90})(?:,|\.| and | y |$)/iu);
+  if (fromMatch?.[1]) {
+    return `from:"${fromMatch[1].trim()}"`;
+  }
+
+  const aboutMatch = prompt.match(
+    /\b(?:about|regarding|for|sobre|de)\s+(?:my\s+|mi\s+)?([a-z0-9áéíóúñü \-_/]{3,90})(?:,|\.| and | y |$)/iu
+  );
+  if (aboutMatch?.[1]) {
+    return aboutMatch[1].trim();
+  }
+
+  return DEFAULT_GMAIL_DEMO_QUERY;
+}
+
 function isHackerNewsTask(prompt: string, pageUrl: string): boolean {
   const lowerPrompt = prompt.toLowerCase();
 
@@ -1580,8 +2018,26 @@ function isGmailTask(prompt: string, pageUrl: string): boolean {
     pageUrl.includes("mail.google.com") ||
     lowerPrompt.includes("gmail") ||
     lowerPrompt.includes("unread email") ||
-    lowerPrompt.includes("unread mails")
+    lowerPrompt.includes("unread mails") ||
+    isGmailSearchOpenTask(prompt) ||
+    isGmailDraftReplyTask(prompt)
   );
+}
+
+function isGmailDraftReplyTask(prompt: string): boolean {
+  const lowerPrompt = prompt.toLowerCase();
+  const replySignals = ["draft a reply", "draft reply", "write a reply", "compose a reply", "borrador", "respuesta", "responder"];
+  const searchSignals = ["search", "find", "look for", "buscar", "busca", "email", "correo", "gmail"];
+  return replySignals.some((signal) => lowerPrompt.includes(signal)) && searchSignals.some((signal) => lowerPrompt.includes(signal));
+}
+
+function isGmailSearchOpenTask(prompt: string): boolean {
+  const lowerPrompt = prompt.toLowerCase();
+  const hasFindSignal = ["find", "search", "look for", "buscar", "busca"].some((signal) => lowerPrompt.includes(signal));
+  const hasEmailSignal = ["email", "correo", "mail"].some((signal) => lowerPrompt.includes(signal));
+  const hasFromSignal = ["from ", "de ", "amazon associates"].some((signal) => lowerPrompt.includes(signal));
+  const hasOpenSignal = ["open", "latest", "last", "último", "ultimo", "first"].some((signal) => lowerPrompt.includes(signal));
+  return !isGmailDraftReplyTask(prompt) && hasFindSignal && (hasEmailSignal || hasFromSignal) && hasOpenSignal;
 }
 
 function extractJsonValue(raw: string): unknown | null {

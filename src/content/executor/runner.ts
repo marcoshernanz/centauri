@@ -8,7 +8,7 @@ import {
 } from "../../shared/actions";
 import { getVisualCursor } from "../dom/visualCursor";
 
-const NON_RETRYABLE_ACTIONS = new Set<AgentAction["type"]>(["OPEN_IN_SAME_TAB", "BACK", "DONE"]);
+const NON_RETRYABLE_ACTIONS = new Set<AgentAction["type"]>(["OPEN_IN_SAME_TAB", "BACK", "TYPE", "DONE"]);
 
 export async function executeActions(
   actions: AgentAction[],
@@ -191,6 +191,36 @@ async function executeAction(
       };
     }
 
+    case "TYPE": {
+      const element = findTargetElement(action.target) ?? document.activeElement;
+      const text = action.params?.text ?? "";
+      if (!element || !text.trim()) {
+        throw new Error("TYPE target or text is missing");
+      }
+
+      if (!(element instanceof HTMLElement)) {
+        throw new Error("TYPE target is not editable");
+      }
+
+      scrollIntoViewIfNeeded(element);
+      await animateHumanInspect(element);
+      focusEditableElement(element);
+      if (action.params?.clear) {
+        clearEditableElement(element);
+      }
+      typeIntoEditableElement(element, text);
+      dispatchInputEvents(element);
+
+      if (action.params?.submit) {
+        triggerEnterKey(element);
+      }
+
+      await sleep(randomBetween(50, 110));
+      return {
+        selectorUsed: action.target?.selectors?.[0]
+      };
+    }
+
     case "OPEN_IN_SAME_TAB": {
       const targetElement = findTargetElement(action.target);
       const targetUrl = action.target?.url ?? getAnchorHref(targetElement);
@@ -306,9 +336,12 @@ function findTargetElement(target: TargetSpec | undefined): Element | null {
     return null;
   }
 
+  const visibleCandidates = candidates.filter((candidate) => isVisibleElement(candidate));
+  const targetPool = visibleCandidates.length > 0 ? visibleCandidates : candidates;
+
   const filtered = target?.textIncludes
-    ? candidates.filter((element) => getElementText(element).toLowerCase().includes(target.textIncludes!.toLowerCase()))
-    : candidates;
+    ? targetPool.filter((element) => getElementText(element).toLowerCase().includes(target.textIncludes!.toLowerCase()))
+    : targetPool;
 
   const index = target?.index ?? 0;
   return filtered[index] ?? null;
@@ -334,14 +367,25 @@ async function waitForTarget(target: TargetSpec | undefined, timeoutMs: number):
 }
 
 function queryCandidates(selectors: string[]): Element[] {
+  let firstNonEmpty: Element[] | null = null;
+
   for (const selector of selectors) {
     const nodes = Array.from(document.querySelectorAll(selector));
+    if (!firstNonEmpty && nodes.length > 0) {
+      firstNonEmpty = nodes;
+    }
+
+    const visibleNodes = nodes.filter((node) => isVisibleElement(node));
+    if (visibleNodes.length > 0) {
+      return visibleNodes;
+    }
+
     if (nodes.length > 0) {
-      return nodes;
+      continue;
     }
   }
 
-  return [];
+  return firstNonEmpty ?? [];
 }
 
 function normalizeText(value: string): string {
@@ -358,6 +402,67 @@ function getElementText(element: Element | null | undefined): string {
   }
 
   return element.textContent ?? "";
+}
+
+function focusEditableElement(element: HTMLElement): void {
+  element.focus();
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    const end = element.value.length;
+    try {
+      element.setSelectionRange(end, end);
+    } catch {
+      // Ignore input types that do not support text selection ranges.
+    }
+  }
+}
+
+function clearEditableElement(element: HTMLElement): void {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    element.value = "";
+    return;
+  }
+
+  if (element.isContentEditable) {
+    element.innerHTML = "";
+  }
+}
+
+function typeIntoEditableElement(element: HTMLElement, value: string): void {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    element.value = value;
+    return;
+  }
+
+  if (element.isContentEditable) {
+    element.textContent = value;
+    return;
+  }
+
+  throw new Error("TYPE target does not support text input");
+}
+
+function dispatchInputEvents(element: HTMLElement): void {
+  element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function triggerEnterKey(element: HTMLElement): void {
+  const keyOptions: KeyboardEventInit = {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true
+  };
+
+  element.dispatchEvent(new KeyboardEvent("keydown", keyOptions));
+  element.dispatchEvent(new KeyboardEvent("keypress", keyOptions));
+  element.dispatchEvent(new KeyboardEvent("keyup", keyOptions));
+
+  if (element instanceof HTMLInputElement && element.form) {
+    element.form.requestSubmit();
+  }
 }
 
 function triggerClick(element: Element): void {

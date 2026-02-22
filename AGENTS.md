@@ -10,10 +10,9 @@ Build a demo-ready Chrome extension in 12 hours that lets users execute web task
 Read these first at the start of every session.
 
 ## Demo-Critical Scenarios
-1. Hacker News: “Summarize the top 5 hackernews articles.”
-2. Gmail: “Give me a summary of my last 5 unread emails.”
+1. Gmail: “Find the last email from amazon associates.”
 
-All technical decisions should optimize these two flows for live demo performance and stability.
+All technical decisions should optimize this flow for live demo performance and stability.
 
 ## Priorities (Strict Order)
 1. Human-like but extremely fast navigation.
@@ -24,7 +23,7 @@ All technical decisions should optimize these two flows for live demo performanc
 - Chrome Extension MV3 with background orchestrator + content executor.
 - Claude is mandatory model.
 - Constrained action schema only; no unconstrained free-form execution.
-- Deterministic selectors and domain adapters for HN/Gmail first.
+- Deterministic selectors and domain adapters for Gmail first.
 - Tight timeouts, retries, and hard caps to avoid demo stalls.
 
 ## Operating Procedure For Agents
@@ -61,7 +60,7 @@ No exceptions.
 ## Demo Safety Rules
 - Always preserve a fallback path (`top 3` variant).
 - Keep a deterministic per-domain backup flow available if planner degrades.
-- Before demo: run both critical scenarios end-to-end once.
+- Before demo: run the Gmail critical scenario end-to-end once.
 
 ## What To Avoid
 - Broad “agent for all websites” scope creep.

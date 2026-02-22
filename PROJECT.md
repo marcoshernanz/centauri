@@ -5,9 +5,8 @@ Build a **Chrome extension** that opens a bottom command bar with a keyboard sho
 
 This is a **hackathon MVP** optimized for a live demo in 12 hours.
 
-Primary demo scenarios:
-1. **Hacker News**: “Summarize the top 5 Hacker News articles.”
-2. **Gmail**: “Give me a summary of my last 5 unread emails.”
+Primary demo scenario:
+1. **Gmail**: “Find the last email from amazon associates.”
 
 Priority order:
 1. Human-like but extremely fast navigation (most important for demo wow factor)
@@ -42,9 +41,7 @@ Priority order:
 ### In scope (must ship)
 - Bottom command bar UI in content script.
 - Keyboard shortcut to toggle UI.
-- Task execution loop for two domains:
-  - `news.ycombinator.com`
-  - `mail.google.com`
+- Task execution loop for `mail.google.com` (demo-critical).
 - Claude-based planner + step generator.
 - Deterministic action executor (click, type, open, back, extract text).
 - Final summarization response.
@@ -93,6 +90,7 @@ Use a constrained action schema instead of free-form instructions.
 ### Supported actions
 - `LIST_ITEMS` (find candidate list rows with selector hints)
 - `CLICK`
+- `TYPE` (fill inputs/editors, optional submit)
 - `OPEN_IN_SAME_TAB`
 - `BACK`
 - `WAIT_FOR`
@@ -117,35 +115,18 @@ Use a constrained action schema instead of free-form instructions.
 
 ---
 
-## 6. Domain Strategies for Demo
+## 6. Domain Strategy for Demo
 
-### A) Hacker News strategy
-Prompt example: “Summarize the top 5 hackernews articles.”
-
-Plan:
-1. Ensure on `news.ycombinator.com` (navigate if needed).
-2. Get top 5 story links from `.athing` rows.
-3. For each story:
-   - click/open
-   - wait for readable content container
-   - extract article text (first N chars/tokens)
-   - go back
-4. Summarize all 5 with bullet points + one-line takeaways.
-
-Fallback:
-- If article extraction is weak, use `document.body.innerText` truncation.
-
-### B) Gmail strategy
-Prompt example: “Give me a summary of my last 5 unread emails.”
+### Gmail strategy
+Prompt example: “Find the last email from amazon associates.”
 
 Plan:
 1. Ensure on `mail.google.com`.
-2. Filter/select unread threads from inbox list (`is:unread` behavior via UI or unread row selectors).
-3. For each of first 5 unread:
-   - open thread
-   - extract sender + subject + visible body text
-   - go back to inbox
-4. Return concise email-by-email summary + suggested priorities.
+2. Fill search input with target query and submit.
+3. Open first matching thread.
+4. Extract visible thread context.
+5. Open reply editor and insert a generated Spanish draft.
+6. Return a concise run summary confirming draft insertion and that nothing was sent.
 
 Gmail reliability notes:
 - Prefer robust selectors based on roles/aria-labels over fragile class names.
@@ -253,21 +234,14 @@ Recommended file layout:
 
 ## 10. Demo Script (What to Show Judges)
 
-### Demo 1: Hacker News
-1. Open Hacker News front page.
-2. Press shortcut, type: “Summarize the top 5 hackernews articles.”
-3. Let agent visibly click/open/read/back fast.
-4. Show final summary with 5 bullets.
-
-### Demo 2: Gmail
+### Demo: Gmail
 1. Open Gmail inbox.
-2. Press shortcut, type: “Give me a summary of my last 5 unread emails.”
-3. Agent opens threads one by one, extracts context, returns to inbox.
-4. Show concise summary + priority suggestions.
+2. Press shortcut, type: “Find the last email from amazon associates.”
+3. Agent searches Gmail, opens first result, and extracts context.
+4. Show concise summary + confirmation of opened matching email.
 
 Backup prompt options:
-- “Summarize top 3 instead of 5.”
-- “Give me only urgent unread emails summary.”
+- “Search Gmail for "Amazon Associates" and open the first result.”
 
 ---
 
@@ -283,7 +257,7 @@ Backup prompt options:
 - Mitigation: hard cap on extracted text, short waits, limited loops, optimized selector queries.
 
 4. **Navigation errors during live demo**
-- Mitigation: pre-demo smoke test checklist + fallback prompts (`top 3`).
+- Mitigation: pre-demo smoke test checklist + rerun the same prompt after Gmail refresh.
 
 ---
 
@@ -291,7 +265,7 @@ Backup prompt options:
 
 Must-have to win the demo:
 1. Command bar opens instantly with shortcut.
-2. Both HN and Gmail tasks complete end-to-end in a single run.
+2. Gmail search-and-draft task completes end-to-end in a single run.
 3. Agent movement looks human but feels very fast.
 4. Final output is clear, structured, and grounded in extracted content.
 

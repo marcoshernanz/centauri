@@ -6,7 +6,7 @@ export function buildPlannerSystemPrompt(maxActions = 4): string {
   return [
     "You are a browser automation planner.",
     "Return ONLY valid JSON with this exact shape:",
-    '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
+    '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|TYPE|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
     "Rules:",
     "- Use only allowed action types.",
     `- Use 1 to ${maxActions} actions per response.`,
@@ -58,7 +58,7 @@ export function buildPlannerRepairSystemPrompt(): string {
   return [
     "You repair malformed browser-planner JSON.",
     "Return ONLY valid JSON with this shape:",
-    '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
+    '{"actions":[{"id":"string","type":"LIST_ITEMS|CLICK|TYPE|OPEN_IN_SAME_TAB|WAIT_FOR|EXTRACT_TEXT|BACK|SCROLL|DONE","target":{"selectors":["string"],"textIncludes":"string","index":0,"url":"string"},"params":{},"reason":"string"}]}',
     "Rules:",
     "- Keep original intent, fix formatting/schema issues only.",
     "- Remove unsupported fields or unsupported action types.",
@@ -95,6 +95,24 @@ export function buildGmailSummaryPrompt(task: string, snippets: Array<{ index: n
     "3) Suggested Next Actions (numbered list)",
     "Use plain language and avoid copying raw snippets.",
     JSON.stringify(snippets)
+  ].join("\n\n");
+}
+
+export function buildGmailDraftReplyPrompt(input: {
+  task: string;
+  searchQuery: string;
+  emailContext: string;
+}): string {
+  return [
+    `Task: ${input.task}`,
+    `Email search query: ${input.searchQuery}`,
+    "Write a concise reply draft in the same language as the email context.",
+    "Constraints:",
+    "- Keep it polite and natural.",
+    "- 3 short paragraphs max.",
+    "- Do not invent hard facts; if details are missing, ask for confirmation briefly.",
+    "- Output only the email body text, no subject line or labels.",
+    `Email context:\n${summarize(input.emailContext, 1600)}`
   ].join("\n\n");
 }
 

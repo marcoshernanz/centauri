@@ -11,15 +11,11 @@ cat <<CHECKLIST
 
 [Perf Tune Check] Manual Timing Procedure
 1. Reload extension in chrome://extensions.
-2. Open Hacker News and run:
-   Summarize the top 5 hackernews articles
+2. Open Gmail inbox and run:
+   Find the last email from amazon associates
 3. Measure time from Enter to final summary render (seconds).
-4. Open Gmail inbox and run:
-   Give me a summary of my last 5 unread emails
-5. Measure same timing.
 
 Target Ranges (demo-optimized)
-- Hacker News: 7s to 16s
 - Gmail: 6s to 14s
 
 If too slow
