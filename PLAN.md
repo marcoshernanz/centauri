@@ -99,6 +99,7 @@
 | T46 | P1 | DONE | Hotkey toggle regression fix (second press closes shell reliably) | 10m | T37 | Pressing `Ctrl/Cmd+Shift+Space` while a shell is open now closes the topmost visible shell instead of spawning a new one; rebuilt extension bundle reflects source behavior |
 | T47 | P1 | DONE | Humanize Gemini image-response format defaults | 15m | T40,T45 | Gemini image prompt now defaults to plain natural-language 1-2 paragraph responses and avoids rigid numbered markdown sections unless the user explicitly requests structured formatting |
 | T48 | P0 | DONE | Force hardcoded HN/Gmail agent routing in `final_v` and broaden intent matching | 20m | T13,T14,T42 | HN/Gmail deterministic flows run even if shell mode is Chat; intent matching accepts `hack news`/`hn`; build + typecheck pass |
+| T49 | P1 | DONE | Add README documentation (overview, developers, key setup, build/load/use) | 20m | T30 | `README.md` documents Centauri, includes developer credits, model key setup, extension build/load instructions, and usage flow |
 
 ## 5) Architecture Implementation Details
 
@@ -262,6 +263,7 @@ Each action payload includes:
   - T46 Hotkey toggle regression fix for close-on-second-press behavior
   - T47 Humanized Gemini image-response default format
   - T48 Hardcoded HN/Gmail routing priority and intent matching hardening
+  - T49 README documentation + title/icon header polish
 - In progress:
   - None
 - Next up:
@@ -482,6 +484,11 @@ Each action payload includes:
     - expanded Hacker News intent detection to include prompt variants like `hack news` and `hn`.
     - added `detectHardcodedTask` helper for explicit route resolution while preserving existing generic and image flows.
   - Re-verified T48 with `npm run typecheck` and `npm run build`.
+  - Completed T49 README documentation pass:
+    - added `/Users/marcoshernanz/dev/hackeurope2/README.md` with Centauri overview, developer credits, model key setup, build steps, Chrome load process, and usage instructions.
+    - updated `/Users/marcoshernanz/dev/hackeurope2/README.md` to place the Centauri icon directly under the `# Centauri Chrome Extension` title.
+  - Follow-up README header tweak:
+    - kept `# Centauri Chrome Extension` as the first line and inserted `![Centauri Icon](assets/icons/icon-128.png)` immediately below it.
 
 ## 12) Risk & Fallback Matrix
 

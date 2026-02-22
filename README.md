@@ -1,5 +1,7 @@
 # Centauri Chrome Extension
 
+![Centauri Icon](assets/icons/icon-128.png)
+
 Centauri is a Chrome extension that lets you execute web tasks in natural language from a floating command shell.
 It is optimized for fast, visible navigation and reliable summaries. Also with extra feature to add notes to your pages.
 Imporve the usage of LLMs and AI agents on your daily searchs.
