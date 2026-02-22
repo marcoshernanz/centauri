@@ -6,7 +6,9 @@
   "scripts": {
     "build": "npm run clean && node scripts/build.mjs",
     "clean": "rm -rf dist",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:demo:hn": "bash scripts/e2e_hn_demo.sh",
+    "test:demo:gmail": "bash scripts/e2e_gmail_demo.sh"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.30",

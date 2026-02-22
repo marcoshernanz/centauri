@@ -63,16 +63,16 @@
 | T10 | P0 | DONE | Implement planner prompt contract (strict JSON only) | 45m | T09,T04 | Planner returns valid constrained action list |
 | T11 | P0 | DONE | Implement iterative plan-execute loop across background/content | 1h | T10,T05,T06 | Loop runs until `DONE` or hard limit |
 | T12 | P0 | DONE | Implement final summarizer pass + response rendering | 45m | T11 | Final answer shown with structure and source list |
-| T13 | P0 | IN_PROGRESS | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
-| T14 | P0 | IN_PROGRESS | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
-| T15 | P0 | TODO | Harden Gmail selectors with fallback chains | 45m | T14 | Works across minor DOM variation in mailbox view |
+| T13 | P0 | DONE | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
+| T14 | P0 | DONE | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
+| T15 | P0 | DONE | Harden Gmail selectors with fallback chains | 45m | T14 | Works across minor DOM variation in mailbox view |
 | T16 | P1 | TODO | Add compact context builder (URL/title/candidates/snippets only) | 45m | T11 | Token usage reduced; loop remains stable |
 | T17 | P1 | TODO | Add execution trace panel (“show steps”) | 45m | T03,T11 | User can inspect steps after run |
 | T18 | P1 | TODO | Add partial success UX and clear fallback messaging | 30m | T08,T12 | Partial outputs clearly labeled and useful |
 | T19 | P1 | TODO | Performance pass (wait tuning, extraction caps, context trimming) | 1h | T13,T14,T16 | End-to-end runtime materially reduced |
 | T20 | P1 | TODO | Reliability pass (invalid JSON repair + retry policy) | 45m | T10,T11 | Parser failures recovered in most cases |
-| T21 | P0 | TODO | End-to-end test script for Hacker News demo | 30m | T13,T12 | Reproducible green run with expected output quality |
-| T22 | P0 | TODO | End-to-end test script for Gmail demo | 45m | T14,T12 | Reproducible green run with expected output quality |
+| T21 | P0 | DONE | End-to-end test script for Hacker News demo | 30m | T13,T12 | Reproducible green run with expected output quality |
+| T22 | P0 | DONE | End-to-end test script for Gmail demo | 45m | T14,T12 | Reproducible green run with expected output quality |
 | T23 | P0 | TODO | Demo mode polish (copy, loading states, readable summary formatting) | 45m | T21,T22 | Demo looks intentional and understandable |
 | T24 | P0 | TODO | Final rehearsal checklist + backup prompts | 30m | T23 | One-click runbook ready for live presentation |
 
@@ -187,8 +187,8 @@ Each action payload includes:
 | 11:30-12:00 | Rehearsal and backups | T24 |
 
 ## 10) Progress Snapshot
-- Last updated: 2026-02-21
-- Current phase: Claude orchestration complete, domain hardening in progress
+- Last updated: 2026-02-22
+- Current phase: Domain adapters and acceptance scripts complete
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -204,13 +204,17 @@ Each action payload includes:
   - T10 Planner prompt contract
   - T11 Iterative plan-execute orchestration
   - T12 Final summarizer pass
-- In progress:
   - T13 Hacker News adapter (multi-page navigation loop)
   - T14 Gmail adapter (unread thread open/read/back loop)
+  - T15 Gmail selector hardening
+  - T21 Hacker News acceptance script
+  - T22 Gmail acceptance script
+- In progress:
+  - None
 - Next up:
-  - T15 Harden Gmail selectors with fallback chains
-  - T21 Hacker News demo acceptance test script
-  - T22 Gmail demo acceptance test script
+  - T19 Performance pass
+  - T20 Reliability pass
+  - T23 Demo mode polish
 
 ## 11) Work Log
 - 2026-02-21:
@@ -262,6 +266,17 @@ Each action payload includes:
     - Removed storage-based key/model persistence and removed `storage` permission from `/Users/marcoshernanz/dev/hackeurope2/manifest.json`.
   - Added `/Users/marcoshernanz/dev/hackeurope2/.env` and updated `/Users/marcoshernanz/dev/hackeurope2/.gitignore` to ignore local secrets.
   - Re-verified env/config migration with `npm run typecheck` and `npm run build`.
+  - Hardened Gmail execution in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` with broader unread-row, click-target, thread, and inbox-return selector fallback chains.
+  - Added repeatable demo acceptance scripts:
+    - `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_hn_demo.sh`
+    - `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`
+  - Added npm shortcuts for acceptance scripts in `/Users/marcoshernanz/dev/hackeurope2/package.json` (`test:demo:hn`, `test:demo:gmail`).
+  - Smoke-ran both acceptance scripts and re-verified with `npm run typecheck` and `npm run build`.
+- 2026-02-22:
+  - Hardened Gmail selector fallback chains in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` across unread row detection, clickable targets, thread readiness, extraction targets, and inbox-return synchronization.
+  - Added demo acceptance scripts `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_hn_demo.sh` and `/Users/marcoshernanz/dev/hackeurope2/scripts/e2e_gmail_demo.sh`.
+  - Added npm commands in `/Users/marcoshernanz/dev/hackeurope2/package.json`: `test:demo:hn` and `test:demo:gmail`.
+  - Smoke-tested scripts with non-interactive input and verified project integrity with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -274,6 +289,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Validate and harden current HN/Gmail multi-step loops with manual runs and selector fallback tweaks (T13-T15).
-2. Build demo acceptance scripts and run repeatability checks (T21-T24).
-3. Tune speed/reliability tradeoffs for live demo consistency (T19-T20).
+1. Tune speed/reliability tradeoffs for live demo consistency (T19-T20).
+2. Add final demo polish in UX copy and summary formatting (T23).
+3. Create final rehearsal checklist and backup runbook (T24).

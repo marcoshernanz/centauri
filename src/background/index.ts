@@ -28,6 +28,49 @@ const DEFAULT_TARGET_COUNT = 5;
 const MAX_TARGET_COUNT = 5;
 const HN_HOME_URL = "https://news.ycombinator.com/";
 const GMAIL_INBOX_URL = "https://mail.google.com/mail/u/0/#inbox";
+const GMAIL_UNREAD_WAIT_SELECTORS = [
+  "tr.zA.zE",
+  "tr.zE",
+  "div[role='main'] tr.zA.zE",
+  "div[role='main'] tr.zE",
+  "table[role='grid'] tr.zA.zE",
+  "table[role='grid'] tr.zE",
+  "tr[aria-label*='Unread']",
+  "tr[aria-label*='unread']"
+] as const;
+const GMAIL_UNREAD_CLICK_SELECTORS = [
+  "tr.zA.zE span.bog",
+  "tr.zE span.bog",
+  "div[role='main'] tr.zA.zE span.bog",
+  "div[role='main'] tr.zE span.bog",
+  "table[role='grid'] tr.zA.zE span.bog",
+  "tr[aria-label*='Unread'] span.bog",
+  "tr[aria-label*='unread'] span.bog",
+  "tr.zA.zE",
+  "tr.zE"
+] as const;
+const GMAIL_THREAD_WAIT_SELECTORS = [
+  "div[data-message-id]",
+  "div.a3s",
+  "[role='main'] .a3s",
+  "h2.hP",
+  "[role='main']"
+] as const;
+const GMAIL_THREAD_EXTRACT_SELECTORS = [
+  "div.a3s.aiL",
+  "div.a3s",
+  "[role='main'] div.a3s",
+  "[role='listitem'] div.a3s",
+  "div[data-message-id]",
+  "[role='main']"
+] as const;
+const GMAIL_INBOX_RETURN_WAIT_SELECTORS = [
+  "tr.zA",
+  "div[role='main'] tr.zA",
+  "table[role='grid'] tr.zA",
+  "[role='main'] table tr",
+  "[role='main']"
+] as const;
 
 chrome.commands.onCommand.addListener(async (command: string) => {
   if (command !== TOGGLE_COMMAND) {
@@ -249,30 +292,36 @@ async function runGmailFlow(
       {
         id: `wait-unread-${index}`,
         type: "WAIT_FOR",
-        target: { selectors: ["tr.zE", "div[role='main'] tr.zE", "[role='main']"] },
-        params: { timeoutMs: 2200 }
+        target: { selectors: [...GMAIL_UNREAD_WAIT_SELECTORS] },
+        params: { timeoutMs: 2400 }
       },
       {
         id: `open-unread-${index}`,
         type: "CLICK",
-        target: { selectors: ["tr.zE", "div[role='main'] tr.zE"], index: 0 }
+        target: { selectors: [...GMAIL_UNREAD_CLICK_SELECTORS], index: 0 }
       },
       {
         id: `wait-thread-${index}`,
         type: "WAIT_FOR",
-        target: { selectors: ["div[data-message-id]", "div.a3s", "[role='main']"] },
-        params: { timeoutMs: 2200 }
+        target: { selectors: [...GMAIL_THREAD_WAIT_SELECTORS] },
+        params: { timeoutMs: 2600 }
       },
       {
         id: `extract-thread-${index}`,
         type: "EXTRACT_TEXT",
-        target: { selectors: ["div.a3s", "div[data-message-id]", "[role='main']", "body"] },
-        params: { maxChars: 2600 }
+        target: { selectors: [...GMAIL_THREAD_EXTRACT_SELECTORS] },
+        params: { maxChars: 3000 }
       },
       {
         id: `back-inbox-${index}`,
         type: "BACK",
-        params: { waitMs: 320 }
+        params: { waitMs: 280 }
+      },
+      {
+        id: `wait-inbox-return-${index}`,
+        type: "WAIT_FOR",
+        target: { selectors: [...GMAIL_INBOX_RETURN_WAIT_SELECTORS] },
+        params: { timeoutMs: 2200 }
       }
     ]);
 
