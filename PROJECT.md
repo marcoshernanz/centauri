@@ -19,7 +19,7 @@ Priority order:
 ## 2. Product Experience
 
 ### Trigger
-- Keyboard shortcut (default): `Cmd/Ctrl + Shift + K`
+- Keyboard shortcut (default): `Cmd/Ctrl + Shift + Space`
 - Opens a bottom floating command bar (Spotlight-style).
 
 ### User flow

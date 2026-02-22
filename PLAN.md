@@ -52,7 +52,7 @@
 | ID | Priority | Status | Task | Estimate | Dependencies | Definition of Done |
 |---|---|---|---|---|---|---|
 | T01 | P0 | DONE | Bootstrap extension (MV3, TS build, folder structure) | 30m | None | Extension loads in Chrome, content + background scripts active |
-| T02 | P0 | DONE | Implement keyboard shortcut + command bar toggle | 30m | T01 | `Cmd/Ctrl+Shift+K` opens/closes bottom bar on supported pages |
+| T02 | P0 | DONE | Implement keyboard shortcut + command bar toggle | 30m | T01 | `Cmd/Ctrl+Shift+Space` opens/closes bottom bar on supported pages |
 | T03 | P0 | DONE | Build command bar UI states (`idle/planning/executing/summarizing/done/error`) | 45m | T02 | UI renders state transitions and response panel |
 | T04 | P0 | DONE | Define shared types and strict action schema | 45m | T01 | Typed schema for all actions + runtime validation |
 | T05 | P0 | DONE | Implement core executor actions (`CLICK`, `WAIT_FOR`, `BACK`, `SCROLL`) | 1h | T04 | Actions execute with success/error result payloads |
@@ -87,6 +87,7 @@
 | T34 | P1 | DONE | Refine shell visual styling (logo/send accent, inner border cleanup, bottom box removal) | 20m | T33 | Logo and send button styling match requested orange accent, inner message border removed, logo centered, and completed-state status box removed |
 | T35 | P1 | DONE | Add favicon fallback + top spacing + readable summary formatting | 20m | T34 | Shell icon resolves from page favicon with fallback, history content has better top spacing, and summary text is rendered with clearer line structure |
 | T36 | P0 | DONE | Restore Centuri logo identity and switch TTS to ElevenLabs API | 30m | T35 | Shell icon no longer uses page favicon override, and speaker playback synthesizes audio via ElevenLabs with configured voice/model env vars |
+| T37 | P1 | DONE | Multi-shell hotkey + pin/resize/animation polish for demo UX | 45m | T30,T33 | Shortcut uses `Ctrl/Cmd+Shift+Space`; repeated hotkey spawns a new shell when current shell is already used; each shell can pin/unpin independently; unpinned shell stays slightly transparent; shell is resizable from borders/corners; open/close animations are smoother with fade/blur exit |
 
 ## 5) Architecture Implementation Details
 
@@ -238,6 +239,7 @@ Each action payload includes:
   - T34 Shell visual refinements from user feedback
   - T35 Favicon fallback and readability formatting pass
   - T36 Logo identity + ElevenLabs TTS integration
+  - T37 Multi-shell hotkey behavior + pin/resize/animation polish
 - In progress:
   - None
 - Next up:
@@ -384,6 +386,13 @@ Each action payload includes:
     - replaced browser `speechSynthesis` fallback path with ElevenLabs API audio synthesis/playback in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx`.
     - injected ElevenLabs env vars (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_SPEECH_PROFILE`) at build time via `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
   - Re-verified T36 with `npm run typecheck` and `npm run build`.
+  - Completed T37 multi-shell hotkey + shell interaction polish:
+    - changed command shortcut to `Ctrl/Cmd+Shift+Space` in `/Users/marcoshernanz/dev/hackeurope2/manifest.json`.
+    - synced shortcut documentation updates in `/Users/marcoshernanz/dev/hackeurope2/PROJECT.md`, `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`, and T02 notes in `/Users/marcoshernanz/dev/hackeurope2/PLAN.md`.
+    - replaced singleton shell handling with bounded multi-shell management in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts` (creates new shell on repeated hotkey when current shell is already used, keeps pristine-shell toggle-close behavior, and tracks topmost shell layering).
+    - extended shell lifecycle state in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx` for smooth close animation, per-shell z-index activation, persisted size metadata, and independent pin/move/resize state.
+    - added border/corner resizing and smoother open/close animations with slight unpinned transparency in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+  - Re-verified T37 with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 

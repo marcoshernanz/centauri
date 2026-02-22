@@ -50,6 +50,8 @@ export type ShellViewModel = {
   pinned: boolean;
   initialLeft?: number;
   initialBottom?: number;
+  initialWidth?: number;
+  initialHeight?: number;
 };
 
 export type ShellCallbacks = {
@@ -61,9 +63,11 @@ export type ShellCallbacks = {
   onClose: () => void;
   onRetry: () => void;
   onPositionChange: (left: number, bottom: number) => void;
+  onSizeChange: (width: number, height: number) => void;
   onCollapse: () => void;
   onExpand: () => void;
   onTogglePin: () => void;
+  onActivate: () => void;
 };
 
 type ShellAppProps = {
@@ -186,6 +190,112 @@ const useDrag = (
   return { onDragStart };
 };
 
+type ResizeDirection = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const useResize = (
+  elRef: React.RefObject<HTMLElement | null>,
+  onPositionChange: (left: number, bottom: number) => void,
+  onSizeChange: (width: number, height: number) => void,
+  locked: boolean,
+) => {
+  const MIN_WIDTH = 360;
+  const MIN_HEIGHT = 86;
+  const VIEWPORT_PADDING = 8;
+
+  const onResizeStart = useCallback(
+    (direction: ResizeDirection, e: React.MouseEvent) => {
+      if (locked) return;
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const el = elRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = rect.left;
+      const startTop = rect.top;
+      const startWidth = rect.width;
+      const startHeight = rect.height;
+
+      // Freeze into absolute fixed coordinates before resizing.
+      el.style.position = "fixed";
+      el.style.left = `${startLeft}px`;
+      el.style.top = `${startTop}px`;
+      el.style.bottom = "auto";
+      el.style.transform = "none";
+      el.style.width = `${startWidth}px`;
+      el.style.height = `${startHeight}px`;
+      el.style.animation = "none";
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const deltaY = moveEvent.clientY - startY;
+
+        let nextLeft = startLeft;
+        let nextTop = startTop;
+        let nextWidth = startWidth;
+        let nextHeight = startHeight;
+
+        if (direction.includes("e")) {
+          nextWidth = startWidth + deltaX;
+        }
+        if (direction.includes("s")) {
+          nextHeight = startHeight + deltaY;
+        }
+        if (direction.includes("w")) {
+          nextWidth = startWidth - deltaX;
+          nextLeft = startLeft + deltaX;
+        }
+        if (direction.includes("n")) {
+          nextHeight = startHeight - deltaY;
+          nextTop = startTop + deltaY;
+        }
+
+        const maxWidth = window.innerWidth - VIEWPORT_PADDING * 2;
+        const maxHeight = window.innerHeight - VIEWPORT_PADDING * 2;
+        nextWidth = clamp(nextWidth, MIN_WIDTH, Math.max(MIN_WIDTH, maxWidth));
+        nextHeight = clamp(nextHeight, MIN_HEIGHT, Math.max(MIN_HEIGHT, maxHeight));
+
+        if (direction.includes("w")) {
+          nextLeft = startLeft + (startWidth - nextWidth);
+        }
+        if (direction.includes("n")) {
+          nextTop = startTop + (startHeight - nextHeight);
+        }
+
+        nextLeft = clamp(nextLeft, VIEWPORT_PADDING, window.innerWidth - nextWidth - VIEWPORT_PADDING);
+        nextTop = clamp(nextTop, VIEWPORT_PADDING, window.innerHeight - nextHeight - VIEWPORT_PADDING);
+
+        el.style.left = `${nextLeft}px`;
+        el.style.top = `${nextTop}px`;
+        el.style.width = `${nextWidth}px`;
+        el.style.height = `${nextHeight}px`;
+      };
+
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        const finalRect = el.getBoundingClientRect();
+        const finalLeft = finalRect.left + finalRect.width / 2;
+        const finalBottom = Math.max(0, window.innerHeight - finalRect.bottom);
+        onPositionChange(finalLeft, finalBottom);
+        onSizeChange(finalRect.width, finalRect.height);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [elRef, locked, onPositionChange, onSizeChange],
+  );
+
+  return { onResizeStart };
+};
+
 // ── CloseIcon ─────────────────────────────────────────────────────────────────
 const CollapseIcon = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -206,10 +316,14 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
   const pendingPinDocPosRef = useRef<{ left: number; top: number } | null>(null);
   const hasPinSyncInitializedRef = useRef(false);
   const onPositionChangeRef = useRef(callbacks.onPositionChange);
+  const onSizeChangeRef = useRef(callbacks.onSizeChange);
 
   useEffect(() => {
     onPositionChangeRef.current = callbacks.onPositionChange;
   }, [callbacks.onPositionChange]);
+  useEffect(() => {
+    onSizeChangeRef.current = callbacks.onSizeChange;
+  }, [callbacks.onSizeChange]);
 
   const { onDragStart } = useDrag(
     containerRef,
@@ -217,6 +331,16 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
       onPositionChangeRef.current(left, bottom);
     },
     view.pinned,
+  );
+  const { onResizeStart } = useResize(
+    containerRef,
+    (left, bottom) => {
+      onPositionChangeRef.current(left, bottom);
+    },
+    (width, height) => {
+      onSizeChangeRef.current(width, height);
+    },
+    false,
   );
 
   useEffect(() => { setLocalValue(view.prompt); }, [view.prompt]);
@@ -300,14 +424,25 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
   // fullyHideShell always clears savedPos, so this only activates if the
   // shell was soft-collapsed (button) and then the page navigated/remounted.
   useLayoutEffect(() => {
-    const { initialLeft, initialBottom } = view;
-    if (initialLeft != null && initialBottom != null && containerRef.current) {
-      const el = containerRef.current;
-      el.style.top       = "auto";
-      el.style.left      = `${initialLeft}px`;
-      el.style.bottom    = `${initialBottom}px`;
+    const { initialLeft, initialBottom, initialWidth, initialHeight } = view;
+    const el = containerRef.current;
+    if (!el) {
+      return;
+    }
+
+    if (initialLeft != null && initialBottom != null) {
+      el.style.top = "auto";
+      el.style.left = `${initialLeft}px`;
+      el.style.bottom = `${initialBottom}px`;
       el.style.transform = "translateX(-50%)";
       el.style.animation = "none";
+    }
+
+    if (initialWidth != null) {
+      el.style.width = `${initialWidth}px`;
+    }
+    if (initialHeight != null) {
+      el.style.height = `${initialHeight}px`;
     }
   }, []); // intentionally only on mount
 
@@ -373,7 +508,17 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
       <div
         ref={containerRef}
         className={`sp-shell${view.hiding ? " sp-hiding" : ""}${view.collapsed ? " sp-collapsed" : ""}${view.pinned ? " sp-pinned" : ""}`}
+        onMouseDown={callbacks.onActivate}
       >
+        <div className="sp-resize-handle sp-resize-handle--n" onMouseDown={(event) => onResizeStart("n", event)} />
+        <div className="sp-resize-handle sp-resize-handle--e" onMouseDown={(event) => onResizeStart("e", event)} />
+        <div className="sp-resize-handle sp-resize-handle--s" onMouseDown={(event) => onResizeStart("s", event)} />
+        <div className="sp-resize-handle sp-resize-handle--w" onMouseDown={(event) => onResizeStart("w", event)} />
+        <div className="sp-resize-handle sp-resize-handle--ne" onMouseDown={(event) => onResizeStart("ne", event)} />
+        <div className="sp-resize-handle sp-resize-handle--nw" onMouseDown={(event) => onResizeStart("nw", event)} />
+        <div className="sp-resize-handle sp-resize-handle--se" onMouseDown={(event) => onResizeStart("se", event)} />
+        <div className="sp-resize-handle sp-resize-handle--sw" onMouseDown={(event) => onResizeStart("sw", event)} />
+
         {showPinButton && (
           <div className="sp-shell-actions">
             <button
@@ -576,12 +721,12 @@ const SHELL_CSS = `
   100% { background-position: -200% 0 }
 }
 @keyframes sp-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.985); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  from { opacity: 0; transform: translateX(-50%) translateY(34px) scale(0.982); filter: blur(2px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); filter: blur(0); }
 }
 @keyframes sp-out {
-  from { opacity: 1; }
-  to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  from { opacity: 1; filter: blur(0); }
+  to   { opacity: 0; filter: blur(2.5px); }
 }
 @keyframes sp-msg-in {
   from { opacity: 0; transform: translateY(4px); }
@@ -594,8 +739,14 @@ const SHELL_CSS = `
   left: 50%;
   transform: translateX(-50%);
   width: min(520px, calc(100vw - 24px));
+  min-width: 360px;
+  min-height: 72px;
+  max-width: min(980px, calc(100vw - 16px));
+  max-height: min(82vh, 760px);
   z-index: 2;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
   font-family: Inter, "Segoe UI", system-ui, sans-serif !important;
   font-size: 13px !important;
   font-weight: 400 !important;
@@ -603,32 +754,96 @@ const SHELL_CSS = `
   background: var(--sp-slate-950);
   border: 1px solid hsl(215.4 31.8% 16.9% / 0.9);
   border-radius: 18px;
-  opacity: 0.96;
+  opacity: 0.975;
   box-shadow:
     0 12px 28px hsl(222.2 84% 4.9% / 0.55),
     0 3px 10px hsl(222.2 84% 4.9% / 0.38);
   overflow: hidden;
-  animation: sp-in 340ms cubic-bezier(.22,1,.36,1) both;
-  transition: opacity 160ms ease, box-shadow 180ms ease;
+  animation: sp-in 520ms cubic-bezier(.16,.95,.21,1) both;
+  transition: opacity 200ms ease, box-shadow 200ms ease, filter 220ms ease;
   user-select: none;
+}
+.sp-shell:hover {
+  opacity: 0.99;
 }
 .sp-shell.sp-pinned {
   opacity: 1;
   box-shadow: none;
 }
 .sp-hiding {
-  animation: sp-out 220ms ease forwards;
+  animation: sp-out 280ms ease forwards;
 }
 
 .sp-shell-actions {
   position: absolute;
   top: 8px;
   right: 10px;
-  z-index: 5;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.sp-resize-handle {
+  position: absolute;
+  z-index: 8;
+  background: transparent;
+}
+.sp-resize-handle--n,
+.sp-resize-handle--s {
+  left: 12px;
+  right: 12px;
+  height: 8px;
+}
+.sp-resize-handle--n {
+  top: 0;
+  cursor: ns-resize;
+}
+.sp-resize-handle--s {
+  bottom: 0;
+  cursor: ns-resize;
+}
+.sp-resize-handle--e,
+.sp-resize-handle--w {
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+}
+.sp-resize-handle--e {
+  right: 0;
+  cursor: ew-resize;
+}
+.sp-resize-handle--w {
+  left: 0;
+  cursor: ew-resize;
+}
+.sp-resize-handle--ne,
+.sp-resize-handle--nw,
+.sp-resize-handle--se,
+.sp-resize-handle--sw {
+  width: 12px;
+  height: 12px;
+}
+.sp-resize-handle--ne {
+  right: 0;
+  top: 0;
+  cursor: nesw-resize;
+}
+.sp-resize-handle--nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+.sp-resize-handle--se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+.sp-resize-handle--sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
 }
 
 /* ── History panel ─────────────────────────────────────── */
@@ -828,7 +1043,9 @@ const SHELL_CSS = `
 
 /* ── History panel ──────────────────────────────────────────── */
 .sp-history {
-  max-height: 320px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(60vh, 560px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 28px 14px 10px;

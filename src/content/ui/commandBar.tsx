@@ -4,6 +4,17 @@ import type { UIState } from "../../shared/messages";
 import { ShellApp, type CompletedTaskModel, type MenuOption, type ShellCallbacks, type ShellViewModel } from "./shell";
 
 type SubmitHandler = (prompt: string) => Promise<void>;
+type ActivateHandler = (id: string) => void;
+type CloseHandler = (id: string) => void;
+
+type CommandBarOptions = {
+  id: string;
+  zIndex: number;
+  onSubmit: SubmitHandler;
+  onActivate: ActivateHandler;
+  onClose: CloseHandler;
+};
+
 declare const __NWA_ELEVENLABS_API_KEY__: string;
 declare const __NWA_ELEVENLABS_VOICE_ID__: string;
 declare const __NWA_ELEVENLABS_SPEECH_PROFILE__: string;
@@ -40,7 +51,8 @@ type SpeechRecognitionWindow = Window & {
   webkitSpeechRecognition?: SpeechRecognitionCtorLike;
 };
 
-const HOST_ID = "nwa-shell-host";
+const HOST_ID_PREFIX = "nwa-shell-host";
+const CLOSE_ANIMATION_MS = 280;
 const MAX_COMPLETED_TASKS = 8;
 
 const STATUS_LABEL: Record<UIState, string> = {
@@ -60,11 +72,18 @@ const MENU_OPTIONS: MenuOption[] = [
 ];
 
 export class CommandBar {
+  private readonly id: string;
   private readonly host: HTMLDivElement;
   private readonly root: Root;
   private readonly onSubmit: SubmitHandler;
+  private readonly onActivate: ActivateHandler;
+  private readonly onClose: CloseHandler;
+  private readonly hostMouseDownListener: () => void;
 
   private isOpen = false;
+  private disposed = false;
+  private hiding = false;
+  private closeTimerId: number | null = null;
   private state: UIState = "idle";
   private promptDraft = "";
   private rawOutput = "";
@@ -73,10 +92,14 @@ export class CommandBar {
   private traceResults: ActionExecutionResult[] = [];
   private completedTasks: CompletedTaskModel[] = [];
   private activePrompt: string | null = null;
+  private promptEdited = false;
   private lastSubmittedPrompt = "";
   private pinned = false;
   private collapsed = false;
+  private moved = false;
+  private resized = false;
   private position: { left?: number; bottom?: number } = {};
+  private size: { width?: number; height?: number } = {};
   private readonly micSupported: boolean;
   private readonly ttsSupported: boolean;
   private readonly elevenlabsApiKey: string;
@@ -93,8 +116,11 @@ export class CommandBar {
   private ttsAbortController: AbortController | null = null;
   private ttsRequestId = 0;
 
-  constructor(onSubmit: SubmitHandler) {
-    this.onSubmit = onSubmit;
+  constructor(options: CommandBarOptions) {
+    this.id = options.id;
+    this.onSubmit = options.onSubmit;
+    this.onActivate = options.onActivate;
+    this.onClose = options.onClose;
     this.micSupported = Boolean(this.getSpeechRecognitionCtor());
     this.elevenlabsApiKey = __NWA_ELEVENLABS_API_KEY__ ?? "";
     this.elevenlabsVoiceId = __NWA_ELEVENLABS_VOICE_ID__ ?? "";
@@ -102,10 +128,10 @@ export class CommandBar {
     this.ttsSupported = this.elevenlabsApiKey.trim().length > 0 && this.elevenlabsVoiceId.trim().length > 0;
 
     this.host = document.createElement("div");
-    this.host.id = HOST_ID;
+    this.host.id = `${HOST_ID_PREFIX}-${this.id}`;
     this.host.style.position = "fixed";
     this.host.style.inset = "0";
-    this.host.style.zIndex = "2147483646";
+    this.host.style.zIndex = String(options.zIndex);
     this.host.style.pointerEvents = "none";
 
     const shadow = this.host.attachShadow({ mode: "open" });
@@ -115,21 +141,58 @@ export class CommandBar {
 
     document.documentElement.appendChild(this.host);
     this.root = createRoot(mountNode);
-
-    document.addEventListener("keydown", (event: KeyboardEvent) => {
-      if (!this.isOpen || event.key !== "Escape") {
-        return;
-      }
-
-      event.preventDefault();
-      this.close();
-    });
+    this.hostMouseDownListener = () => {
+      this.onActivate(this.id);
+    };
+    this.host.addEventListener("mousedown", this.hostMouseDownListener);
 
     this.render();
   }
 
+  getId(): string {
+    return this.id;
+  }
+
+  setZIndex(zIndex: number): void {
+    this.host.style.zIndex = String(zIndex);
+  }
+
+  isOpenAndVisible(): boolean {
+    return this.isOpen && !this.hiding;
+  }
+
+  isPristineForHotkeyToggle(): boolean {
+    if (!this.isOpenAndVisible()) {
+      return false;
+    }
+
+    const hasTypedPrompt = this.promptDraft.trim().length > 0;
+    const hasOutput =
+      this.rawOutput.trim().length > 0 ||
+      this.summary !== null ||
+      this.findings.length > 0 ||
+      this.traceResults.length > 0 ||
+      this.completedTasks.length > 0;
+    const hasRunState = this.state !== "idle" || this.activePrompt !== null || this.lastSubmittedPrompt.length > 0;
+
+    return !(
+      hasTypedPrompt ||
+      hasOutput ||
+      hasRunState ||
+      this.promptEdited ||
+      this.pinned ||
+      this.collapsed ||
+      this.moved ||
+      this.resized
+    );
+  }
+
   toggle(): void {
-    if (this.isOpen) {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.isOpenAndVisible()) {
       this.close();
       return;
     }
@@ -138,17 +201,67 @@ export class CommandBar {
   }
 
   open(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.closeTimerId !== null) {
+      window.clearTimeout(this.closeTimerId);
+      this.closeTimerId = null;
+    }
     this.isOpen = true;
+    this.hiding = false;
+    this.onActivate(this.id);
     this.render();
   }
 
   close(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.hiding) {
+      return;
+    }
+
     this.stopMicCapture();
     this.stopSpeechOutput();
-    this.isOpen = false;
     this.pinned = false;
     this.collapsed = false;
+    this.hiding = true;
+    this.isOpen = true;
     this.render();
+
+    if (this.closeTimerId !== null) {
+      window.clearTimeout(this.closeTimerId);
+    }
+
+    this.closeTimerId = window.setTimeout(() => {
+      this.closeTimerId = null;
+      this.hiding = false;
+      this.isOpen = false;
+      this.dispose();
+      this.onClose(this.id);
+    }, CLOSE_ANIMATION_MS);
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+
+    if (this.closeTimerId !== null) {
+      window.clearTimeout(this.closeTimerId);
+      this.closeTimerId = null;
+    }
+
+    this.stopMicCapture();
+    this.stopSpeechOutput();
+    this.host.removeEventListener("mousedown", this.hostMouseDownListener);
+    this.root.unmount();
+    this.host.remove();
   }
 
   setState(state: UIState): void {
@@ -283,36 +396,46 @@ export class CommandBar {
       sources: [],
       menuOptions: MENU_OPTIONS,
       completedTasks: this.completedTasks,
-      hiding: false,
+      hiding: this.hiding,
       collapsed: this.collapsed,
       pinned: this.pinned,
       initialLeft: this.position.left,
-      initialBottom: this.position.bottom
+      initialBottom: this.position.bottom,
+      initialWidth: this.size.width,
+      initialHeight: this.size.height
     };
   }
 
   private getShellCallbacks(): ShellCallbacks {
     return {
       onPromptChange: (value: string) => {
+        this.promptEdited = true;
         this.promptDraft = value;
+        this.onActivate(this.id);
       },
       onSubmit: (value: string) => {
+        this.onActivate(this.id);
         void this.handleSubmit(value);
       },
       onMicToggle: () => {
+        this.onActivate(this.id);
         this.toggleMicCapture();
       },
       onTtsToggle: () => {
+        this.onActivate(this.id);
         this.toggleSpeechOutput();
       },
       onCancel: () => {
+        this.onActivate(this.id);
         this.setState("error");
         this.setOutput("Run cancelled.");
       },
       onClose: () => {
+        this.onActivate(this.id);
         this.close();
       },
       onRetry: () => {
+        this.onActivate(this.id);
         const retryPrompt = this.lastSubmittedPrompt;
         if (!retryPrompt) {
           return;
@@ -322,18 +445,29 @@ export class CommandBar {
       },
       onPositionChange: (left: number, bottom: number) => {
         this.position = { left, bottom };
+        this.moved = true;
+      },
+      onSizeChange: (width: number, height: number) => {
+        this.size = { width, height };
+        this.resized = true;
       },
       onCollapse: () => {
+        this.onActivate(this.id);
         this.collapsed = true;
         this.render();
       },
       onExpand: () => {
+        this.onActivate(this.id);
         this.collapsed = false;
         this.render();
       },
       onTogglePin: () => {
+        this.onActivate(this.id);
         this.pinned = !this.pinned;
         this.render();
+      },
+      onActivate: () => {
+        this.onActivate(this.id);
       }
     };
   }
@@ -355,6 +489,7 @@ export class CommandBar {
     }
 
     this.activePrompt = prompt;
+    this.promptEdited = true;
     this.lastSubmittedPrompt = prompt;
     this.promptDraft = prompt;
     this.rawOutput = "";
@@ -635,6 +770,10 @@ export class CommandBar {
   }
 
   private render(): void {
+    if (this.disposed) {
+      return;
+    }
+
     if (!this.isOpen) {
       this.root.render(null);
       return;

@@ -13,7 +13,7 @@
 
 ## 2) Live Demo Sequence
 1. Open Hacker News (`https://news.ycombinator.com/`).
-2. Use shortcut (`Cmd/Ctrl+Shift+K`) and run:
+2. Use shortcut (`Cmd/Ctrl+Shift+Space`) and run:
    - `Summarize the top 5 hackernews articles`
 3. Explain while it runs:
    - visible human-like pointer

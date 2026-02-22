@@ -25,8 +25,8 @@
   "commands": {
     "toggle-command-bar": {
       "suggested_key": {
-        "default": "Ctrl+Shift+K",
-        "mac": "Command+Shift+K"
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
       },
       "description": "Toggle the natural language command bar"
     }

@@ -17,46 +17,172 @@ declare global {
   }
 }
 
+const MAX_OPEN_SHELLS = 6;
+const BASE_SHELL_Z_INDEX = 2147483200;
+
 if (!window.__nwaInitialized) {
   window.__nwaInitialized = true;
   initializeContentScript();
 }
 
+type ShellRegistry = {
+  bars: Map<string, CommandBar>;
+  order: string[];
+  runTargetId: string | null;
+  zIndexCursor: number;
+};
+
 function initializeContentScript(): void {
-  let commandBar: CommandBar;
-  commandBar = new CommandBar(async (prompt: string) => handleSubmitTask(commandBar, prompt));
+  const registry: ShellRegistry = {
+    bars: new Map<string, CommandBar>(),
+    order: [],
+    runTargetId: null,
+    zIndexCursor: BASE_SHELL_Z_INDEX
+  };
+
+  const removeBar = (barId: string): void => {
+    registry.bars.delete(barId);
+    registry.order = registry.order.filter((id) => id !== barId);
+    if (registry.runTargetId === barId) {
+      registry.runTargetId = null;
+    }
+  };
+
+  const bringToFront = (barId: string): void => {
+    const bar = registry.bars.get(barId);
+    if (!bar) {
+      return;
+    }
+
+    registry.zIndexCursor += 1;
+    bar.setZIndex(registry.zIndexCursor);
+    registry.order = [...registry.order.filter((id) => id !== barId), barId];
+  };
+
+  const getLatestVisibleBar = (): CommandBar | null => {
+    for (let index = registry.order.length - 1; index >= 0; index -= 1) {
+      const bar = registry.bars.get(registry.order[index]);
+      if (bar?.isOpenAndVisible()) {
+        return bar;
+      }
+    }
+    return null;
+  };
+
+  const createBar = (): CommandBar => {
+    const barId = createShellId();
+    const bar = new CommandBar({
+      id: barId,
+      zIndex: registry.zIndexCursor + 1,
+      onSubmit: async (prompt: string) => {
+        registry.runTargetId = barId;
+        await handleSubmitTask(bar, prompt);
+      },
+      onActivate: (id: string) => {
+        bringToFront(id);
+      },
+      onClose: (id: string) => {
+        removeBar(id);
+      }
+    });
+
+    registry.bars.set(barId, bar);
+    registry.order.push(barId);
+    bringToFront(barId);
+    bar.open();
+
+    if (registry.order.length > MAX_OPEN_SHELLS) {
+      const oldestId = registry.order[0];
+      if (oldestId && oldestId !== barId) {
+        const oldestBar = registry.bars.get(oldestId);
+        oldestBar?.close();
+      }
+    }
+
+    return bar;
+  };
+
+  const resolveRunTargetBar = (): CommandBar => {
+    if (registry.runTargetId) {
+      const runTarget = registry.bars.get(registry.runTargetId);
+      if (runTarget) {
+        return runTarget;
+      }
+      registry.runTargetId = null;
+    }
+
+    const latest = getLatestVisibleBar();
+    if (latest) {
+      return latest;
+    }
+
+    return createBar();
+  };
+
+  const handleHotkeyToggle = (): void => {
+    const latestBar = getLatestVisibleBar();
+    if (!latestBar) {
+      createBar();
+      return;
+    }
+
+    if (latestBar.isPristineForHotkeyToggle()) {
+      latestBar.close();
+      return;
+    }
+
+    createBar();
+  };
+
+  document.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    const latestBar = getLatestVisibleBar();
+    if (!latestBar) {
+      return;
+    }
+
+    event.preventDefault();
+    latestBar.close();
+  });
 
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message.type === "ui/toggle-command-bar") {
-      commandBar.toggle();
+      handleHotkeyToggle();
       return;
     }
 
     if (message.type === "ui/open-command-bar") {
-      commandBar.open();
+      const bar = resolveRunTargetBar();
+      bar.open();
       return;
     }
 
     if (message.type === "ui/set-command-state") {
-      commandBar.open();
-      commandBar.setState(message.payload.state);
+      const bar = resolveRunTargetBar();
+      bar.open();
+      bar.setState(message.payload.state);
       return;
     }
 
     if (message.type === "ui/show-result") {
-      commandBar.open();
+      const bar = resolveRunTargetBar();
+      bar.open();
+
       if (!message.payload.ok) {
-      commandBar.setState("error");
-      commandBar.setTrace(message.payload.results ?? []);
-      commandBar.setOutput(message.payload.error ?? "Task failed.");
+        bar.setState("error");
+        bar.setTrace(message.payload.results ?? []);
+        bar.setOutput(message.payload.error ?? "Task failed.");
+        return;
+      }
+
+      bar.setState("done");
+      bar.setTrace(message.payload.results ?? []);
+      bar.setOutput(formatUiResultMessage(message));
       return;
     }
-
-    commandBar.setState("done");
-    commandBar.setTrace(message.payload.results ?? []);
-    commandBar.setOutput(formatUiResultMessage(message));
-    return;
-  }
 
     if (message.type !== "executor/execute-actions") {
       return;
@@ -95,12 +221,12 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
     response = await chrome.runtime.sendMessage<SubmitTaskMessage, SubmitTaskResponse>({
       type: "agent/submit-task",
       payload: {
-      prompt,
-      pageUrl: window.location.href,
-      pageTitle: document.title,
-      pageContext: collectPageContext()
-    }
-  });
+        prompt,
+        pageUrl: window.location.href,
+        pageTitle: document.title,
+        pageContext: collectPageContext()
+      }
+    });
   } catch {
     // During navigation the originating content script may be torn down.
     // The background will push the final output to the active page via ui/show-result.
@@ -141,6 +267,10 @@ async function handleExecuteActionsMessage(message: ExecuteActionsMessage): Prom
       results
     }
   };
+}
+
+function createShellId(): string {
+  return `shell_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function sleep(ms: number): Promise<void> {
