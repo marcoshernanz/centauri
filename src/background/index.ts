@@ -258,9 +258,23 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
   const agentConfig = await loadAgentConfig();
   const claudeConfig = await loadClaudeConfig();
+  const hardcodedTask = detectHardcodedTask(trimmedPrompt, message.payload.pageUrl);
+
+  await showRunShellState(tabId, "executing");
+
+  if (hardcodedTask === "hackernews") {
+    const response = await runHackerNewsFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    await pushUiResult(tabId, response, Date.now() - runStartedAt);
+    return response;
+  }
+
+  if (hardcodedTask === "gmail") {
+    const response = await runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    await pushUiResult(tabId, response, Date.now() - runStartedAt);
+    return response;
+  }
 
   if (agentMode === "chat") {
-    await showRunShellState(tabId, "executing");
     const chatResponse = await runReadOnlyDomFlow({
       prompt: trimmedPrompt,
       pageTitle: message.payload.pageTitle,
@@ -273,21 +287,7 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
     return chatResponse;
   }
 
-  await showRunShellState(tabId, "executing");
-
   let response: SubmitTaskResponse;
-
-  if (isHackerNewsTask(trimmedPrompt, message.payload.pageUrl)) {
-    response = await runHackerNewsFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
-    await pushUiResult(tabId, response, Date.now() - runStartedAt);
-    return response;
-  }
-
-  if (isGmailTask(trimmedPrompt, message.payload.pageUrl)) {
-    response = await runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
-    await pushUiResult(tabId, response, Date.now() - runStartedAt);
-    return response;
-  }
 
   response = await runGenericFlow(
     tabId,
@@ -1955,7 +1955,9 @@ function isHackerNewsTask(prompt: string, pageUrl: string): boolean {
   return (
     pageUrl.includes("news.ycombinator.com") ||
     lowerPrompt.includes("hacker news") ||
-    lowerPrompt.includes("hackernews")
+    lowerPrompt.includes("hackernews") ||
+    lowerPrompt.includes("hack news") ||
+    /\bhn\b/.test(lowerPrompt)
   );
 }
 
@@ -1968,6 +1970,18 @@ function isGmailTask(prompt: string, pageUrl: string): boolean {
     lowerPrompt.includes("unread email") ||
     lowerPrompt.includes("unread mails")
   );
+}
+
+function detectHardcodedTask(prompt: string, pageUrl: string): "hackernews" | "gmail" | null {
+  if (isHackerNewsTask(prompt, pageUrl)) {
+    return "hackernews";
+  }
+
+  if (isGmailTask(prompt, pageUrl)) {
+    return "gmail";
+  }
+
+  return null;
 }
 
 function extractJsonValue(raw: string): unknown | null {
