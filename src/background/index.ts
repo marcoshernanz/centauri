@@ -274,7 +274,7 @@ async function runHackerNewsFlow(
     articleSummaries.push({
       title: item.text,
       url,
-      preview: summarizeSnippet(extractedText, 220),
+      preview: buildReadableHighlight(extractedText, 30),
       ok: extractOutcome.ok && extractedText.length > 0
     });
 
@@ -576,7 +576,7 @@ async function runGenericTraversalFlow(
     visited.push({
       title: item.text,
       url: item.href,
-      preview: summarizeSnippet(extractedText, 230),
+      preview: buildReadableHighlight(extractedText, 32),
       ok: extractOutcome.ok && extractedText.length > 0
     });
 
@@ -1009,22 +1009,23 @@ function buildHackerNewsSummary(
   items: Array<{ title: string; url: string; preview: string; ok: boolean }>,
   results: ActionExecutionResult[]
 ): string {
+  const successCount = items.filter((item) => item.ok).length;
   const lines: string[] = [];
-  lines.push(`Task: ${prompt}`);
-  lines.push(`Visited ${items.length} article(s).`);
+  lines.push("Top Stories Digest");
+  lines.push(`I reviewed ${successCount} of ${items.length} selected stories for: "${prompt}".`);
   lines.push("");
+  lines.push("Highlights");
 
   items.forEach((item, index) => {
-    const status = item.ok ? "OK" : "PARTIAL";
-    lines.push(`${index + 1}. [${status}] ${item.title}`);
-    lines.push(`   ${item.url}`);
+    lines.push(`${index + 1}. ${item.title}`);
     lines.push(`   ${item.preview}`);
+    lines.push(`   Source: ${item.url}`);
   });
 
   lines.push("");
-  lines.push(`Execution: ${countOk(results)}/${results.length} actions OK`);
+  lines.push(`Execution: ${countOk(results)}/${results.length} actions completed`);
   if (results.some((result) => !result.ok)) {
-    lines.push("Warning: partial execution, some actions failed.");
+    lines.push("Coverage note: some navigation/extraction steps failed, so this digest may be incomplete.");
   }
 
   return lines.join("\n");
@@ -1268,13 +1269,14 @@ function buildGenericSummary(
   const text = getExtractedText(results);
 
   return [
+    "Page Summary",
     `Task: ${prompt}`,
-    `Page: ${pageTitle} (${pageUrl})`,
+    `Source page: ${pageTitle} (${pageUrl})`,
     "",
-    "Extracted context:",
-    summarizeSnippet(text, 520),
+    "Summary:",
+    buildReadableHighlight(text, 65),
     "",
-    `Execution: ${countOk(results)}/${results.length} actions OK`
+    `Execution: ${countOk(results)}/${results.length} actions completed`
   ].join("\n");
 }
 
@@ -1284,23 +1286,24 @@ function buildGenericTraversalSummary(
   results: ActionExecutionResult[],
   requestedCount: number
 ): string {
+  const completed = visited.filter((item) => item.ok).length;
   const lines: string[] = [];
+  lines.push("Cross-Page Summary");
   lines.push(`Task: ${prompt}`);
-  lines.push(`Processed ${visited.filter((item) => item.ok).length}/${requestedCount} target page(s).`);
+  lines.push(`I processed ${completed} of ${requestedCount} target pages.`);
   lines.push("");
   lines.push("Item Highlights");
 
   visited.forEach((item, index) => {
-    const status = item.ok ? "OK" : "PARTIAL";
-    lines.push(`${index + 1}. [${status}] ${item.title}`);
-    lines.push(`   ${item.url}`);
+    lines.push(`${index + 1}. ${item.title}`);
     lines.push(`   ${item.preview}`);
+    lines.push(`   Source: ${item.url}`);
   });
 
   lines.push("");
-  lines.push(`Execution: ${countOk(results)}/${results.length} actions OK`);
+  lines.push(`Execution: ${countOk(results)}/${results.length} actions completed`);
   if (results.some((result) => !result.ok)) {
-    lines.push("Warning: partial execution; some steps failed.");
+    lines.push("Coverage note: some steps failed during navigation or extraction.");
   }
 
   return lines.join("\n");
@@ -1456,11 +1459,29 @@ function summarizeSnippet(value: string, maxChars: number): string {
     return "(No text extracted)";
   }
 
-  if (normalized.length <= maxChars) {
-    return normalized;
+  return buildReadableHighlight(normalized, Math.max(20, Math.floor(maxChars / 8)));
+}
+
+function buildReadableHighlight(value: string, maxWords: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "No readable text was extracted.";
   }
 
-  return `${normalized.slice(0, maxChars - 3)}...`;
+  const cleaned = normalized
+    .replace(/\b(subscribe|sign in|log in|cookie policy|terms of use|privacy policy)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const firstSentence = cleaned.split(/[.!?]/)[0]?.trim() ?? cleaned;
+  const words = firstSentence.split(" ").filter(Boolean).slice(0, maxWords);
+  const compact = words.join(" ").trim();
+
+  if (!compact) {
+    return "Readable text was extracted, but key details were limited.";
+  }
+
+  return compact.endsWith(".") ? compact : `${compact}.`;
 }
 
 function parseRequestedCount(prompt: string): number {

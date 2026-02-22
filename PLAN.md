@@ -79,6 +79,7 @@
 | T26 | P0 | DONE | Dynamic planner context refresh from live executor metadata | 45m | T16,T20 | Planner sees current URL/title/candidates after navigation |
 | T27 | P1 | DONE | Generic relevance ranking + partial coverage warnings | 45m | T25,T18 | Candidate selection avoids nav noise and reports shortfalls clearly |
 | T28 | P1 | DONE | UI contrast hardening against host-page CSS overrides | 15m | T23 | Output/trace text remains readable on sites like Wikipedia |
+| T29 | P1 | DONE | Humanize deterministic summaries and run-copy tone | 30m | T12,T23 | Output avoids robotic labels and clipped ellipsis-heavy phrasing |
 
 ## 5) Architecture Implementation Details
 
@@ -224,6 +225,7 @@ Each action payload includes:
   - T26 Dynamic planner context refresh
   - T27 Generic candidate ranking + coverage warnings
   - T28 UI contrast hardening for cross-site pages
+  - T29 Humanized summary formatting pass
 - In progress:
   - None
 - Next up:
@@ -334,6 +336,12 @@ Each action payload includes:
     - forced explicit text colors for output/trace panels in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`.
     - added selection contrast styling for readability in dark output panels.
   - Re-verified T28 with `npm run build`.
+  - Humanized summary output style to reduce robotic/demo-breaking phrasing:
+    - replaced deterministic summary status tags (`[OK]`) with natural language formatting in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - switched preview generation from clipped ellipses to short sentence-style highlights.
+    - updated Claude summary prompt guidance in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts` to avoid robotic labels and ellipsis-heavy output.
+    - adjusted top run-copy from `OK` wording to `completed` in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
+  - Re-verified T29 with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 

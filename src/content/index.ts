@@ -151,7 +151,7 @@ function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): str
   if (partial) {
     lines.push("Status: Partial result");
   }
-  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} OK${failCount > 0 ? ` (${failCount} failed)` : ""}`);
+  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} completed${failCount > 0 ? ` (${failCount} failed)` : ""}`);
   if (warnings.length > 0) {
     warnings.forEach((warning) => {
       lines.push(`Warning: ${warning}`);
@@ -175,7 +175,7 @@ function formatUiResultMessage(message: ShowResultMessage): string {
   if (partial) {
     lines.push("Status: Partial result");
   }
-  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} OK${failCount > 0 ? ` (${failCount} failed)` : ""}`);
+  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} completed${failCount > 0 ? ` (${failCount} failed)` : ""}`);
   if (warnings.length > 0) {
     warnings.forEach((warning) => {
       lines.push(`Warning: ${warning}`);

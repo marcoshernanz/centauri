@@ -81,6 +81,7 @@ export function buildHackerNewsSummaryPrompt(task: string, snippets: Array<{ tit
     "2) Article-by-Article Summary (one short bullet per article)",
     "3) Why it matters (2 bullets)",
     "Keep each bullet short. Do not dump raw snippets.",
+    "Avoid robotic labels (e.g. [OK]) and avoid trailing ellipses.",
     JSON.stringify(snippets)
   ].join("\n\n");
 }
@@ -141,7 +142,8 @@ export function buildGenericTraversalSummaryPrompt(input: {
     "Visited page snippets:",
     JSON.stringify(compactVisited),
     "Write a concise answer with sections: Overall Summary, Item Highlights, Suggested Next Actions.",
-    "Use the snippets as evidence and mention if coverage is partial."
+    "Use the snippets as evidence and mention if coverage is partial.",
+    "Avoid status labels like [OK] and avoid ellipsis-heavy phrasing."
   ].join("\n\n");
 }
 
@@ -155,5 +157,5 @@ function summarize(value: string | undefined, maxChars: number): string {
     return normalized;
   }
 
-  return `${normalized.slice(0, maxChars - 3)}...`;
+  return `${normalized.slice(0, maxChars)}`.trim();
 }
