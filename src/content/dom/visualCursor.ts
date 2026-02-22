@@ -32,7 +32,7 @@ class VisualCursor {
 
     const start = this.currentPoint ?? this.getViewportAnchor(target);
     const distance = Math.hypot(target.x - start.x, target.y - start.y);
-    const durationMs = clamp(Math.round(distance / 7), 80, 180);
+    const durationMs = clamp(Math.round(distance / 3.2), 180, 420);
 
     this.motionChain = this.motionChain.then(() => this.animateQuadraticPath(start, target, durationMs));
     return this.motionChain;
@@ -44,7 +44,7 @@ class VisualCursor {
     this.ripple.classList.remove("nwa-visual-ripple-animate");
     void this.ripple.offsetWidth;
     this.ripple.classList.add("nwa-visual-ripple-animate");
-    await sleep(55);
+    await sleep(120);
     this.cursor.classList.remove("nwa-visual-cursor-active");
   }
 

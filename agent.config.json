@@ -1,0 +1,10 @@
+{
+  "claude": {
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.2,
+    "plannerMaxIterations": 4,
+    "plannerMaxActions": 4,
+    "plannerMaxTokens": 700,
+    "summaryMaxTokens": 1000
+  }
+}

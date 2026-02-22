@@ -123,7 +123,7 @@ async function executeAction(
       scrollIntoViewIfNeeded(element);
       await animateHumanClick(element);
       triggerClick(element);
-      await sleep(randomBetween(20, 50));
+      await sleep(randomBetween(60, 120));
 
       return {
         selectorUsed: action.target?.selectors?.[0]
@@ -355,7 +355,7 @@ async function animateHumanInspect(element: Element): Promise<void> {
   try {
     const cursor = getVisualCursor();
     await cursor.moveToElement(element);
-    await sleep(randomBetween(25, 60));
+    await sleep(randomBetween(70, 150));
   } catch {
     // Animation failures should never block action execution.
   }

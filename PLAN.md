@@ -59,10 +59,10 @@
 | T06 | P0 | DONE | Implement extraction action (`EXTRACT_TEXT`) with fallback strategy | 45m | T05 | Extracts meaningful text from current page with truncation |
 | T07 | P0 | DONE | Implement visible cursor + click pulse overlay animation | 45m | T05 | User can see fast human-like movement and clicks |
 | T08 | P0 | DONE | Add retry/timeout guardrails and hard execution caps | 45m | T05,T06 | Failed actions retry once; loop exits safely with explicit error |
-| T09 | P0 | TODO | Implement Claude client (background worker) with env config | 45m | T01 | Claude API call works and returns parsed payload |
-| T10 | P0 | TODO | Implement planner prompt contract (strict JSON only) | 45m | T09,T04 | Planner returns valid constrained action list |
-| T11 | P0 | TODO | Implement iterative plan-execute loop across background/content | 1h | T10,T05,T06 | Loop runs until `DONE` or hard limit |
-| T12 | P0 | TODO | Implement final summarizer pass + response rendering | 45m | T11 | Final answer shown with structure and source list |
+| T09 | P0 | DONE | Implement Claude client (background worker) with env config | 45m | T01 | Claude API call works and returns parsed payload |
+| T10 | P0 | DONE | Implement planner prompt contract (strict JSON only) | 45m | T09,T04 | Planner returns valid constrained action list |
+| T11 | P0 | DONE | Implement iterative plan-execute loop across background/content | 1h | T10,T05,T06 | Loop runs until `DONE` or hard limit |
+| T12 | P0 | DONE | Implement final summarizer pass + response rendering | 45m | T11 | Final answer shown with structure and source list |
 | T13 | P0 | IN_PROGRESS | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
 | T14 | P0 | IN_PROGRESS | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
 | T15 | P0 | TODO | Harden Gmail selectors with fallback chains | 45m | T14 | Works across minor DOM variation in mailbox view |
@@ -188,7 +188,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-21
-- Current phase: Domain adapters in progress (T13-T14)
+- Current phase: Claude orchestration complete, domain hardening in progress
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -200,13 +200,17 @@ Each action payload includes:
   - T06 Extraction action with fallback
   - T07 Visible cursor + click pulse animation
   - T08 Retry/timeout guardrails + action caps
+  - T09 Claude client integration
+  - T10 Planner prompt contract
+  - T11 Iterative plan-execute orchestration
+  - T12 Final summarizer pass
 - In progress:
   - T13 Hacker News adapter (multi-page navigation loop)
   - T14 Gmail adapter (unread thread open/read/back loop)
 - Next up:
-  - T09 Claude client integration
-  - T10 Planner prompt contract
-  - T11 Iterative plan-execute orchestration
+  - T15 Harden Gmail selectors with fallback chains
+  - T21 Hacker News demo acceptance test script
+  - T22 Gmail demo acceptance test script
 
 ## 11) Work Log
 - 2026-02-21:
@@ -241,6 +245,23 @@ Each action payload includes:
     - Gmail loop: wait unread row, click first unread, extract thread context, back to inbox.
   - Added robust execution retries across navigation boundaries by reinjecting content script on no-receiver message errors during action batch execution.
   - Re-verified flow upgrades with `npm run typecheck` and `npm run build`.
+  - Hardened Hacker News loop timing in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` by replacing event-race tab load waits with polling-based readiness checks and explicit return-to-HN navigation between articles.
+  - Slowed human-like pointer animation 2-3x in `/Users/marcoshernanz/dev/hackeurope2/src/content/dom/visualCursor.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts`, and `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`.
+  - Re-verified navigation and animation timing changes with `npm run typecheck` and `npm run build`.
+  - Added Claude API integration and storage-backed config in `/Users/marcoshernanz/dev/hackeurope2/src/agent/claude.ts` (commands: `/key`, `/model`, `/claude-status`).
+  - Added strict planner and summarizer prompt builders in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`.
+  - Reworked `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to:
+    - run deterministic HN/Gmail loops for reliable demo navigation,
+    - use Claude summarization when configured,
+    - run a Claude iterative planner loop for generic tasks with strict JSON action parsing and bounded iterations.
+  - Added `storage` permission in `/Users/marcoshernanz/dev/hackeurope2/manifest.json` for Claude config persistence.
+  - Re-verified Claude integration updates with `npm run typecheck` and `npm run build`.
+  - Replaced slash-command Claude configuration (`/key`, `/model`, `/claude-status`) with env + root config approach:
+    - API key now injected from `ANTHROPIC_API_KEY` at build time via `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
+    - Runtime model/planner settings now loaded from root `/Users/marcoshernanz/dev/hackeurope2/agent.config.json` via `/Users/marcoshernanz/dev/hackeurope2/src/agent/claude.ts`.
+    - Removed storage-based key/model persistence and removed `storage` permission from `/Users/marcoshernanz/dev/hackeurope2/manifest.json`.
+  - Added `/Users/marcoshernanz/dev/hackeurope2/.env` and updated `/Users/marcoshernanz/dev/hackeurope2/.gitignore` to ignore local secrets.
+  - Re-verified env/config migration with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -253,6 +274,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Integrate Claude loop (T09-T12) and keep deterministic planner fallback active.
-2. Validate and harden current HN/Gmail multi-step loops with manual runs and selector fallback tweaks.
-3. Build demo acceptance scripts and run repeatability checks (T21-T24).
+1. Validate and harden current HN/Gmail multi-step loops with manual runs and selector fallback tweaks (T13-T15).
+2. Build demo acceptance scripts and run repeatability checks (T21-T24).
+3. Tune speed/reliability tradeoffs for live demo consistency (T19-T20).

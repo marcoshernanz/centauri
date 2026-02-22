@@ -108,7 +108,7 @@
 }
 
 .nwa-visual-ripple-animate {
-  animation: nwa-click-ripple 160ms ease-out forwards;
+  animation: nwa-click-ripple 320ms ease-out forwards;
 }
 
 @keyframes nwa-click-ripple {
