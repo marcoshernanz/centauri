@@ -6,6 +6,17 @@ export type ToggleCommandBarMessage = {
   type: "ui/toggle-command-bar";
 };
 
+export type ShowResultMessage = {
+  type: "ui/show-result";
+  payload: {
+    ok: boolean;
+    summary?: string;
+    error?: string;
+    results?: ActionExecutionResult[];
+    elapsedMs?: number;
+  };
+};
+
 export type SubmitTaskMessage = {
   type: "agent/submit-task";
   payload: {
@@ -42,4 +53,4 @@ export type ExecuteActionsResponse = {
   };
 };
 
-export type RuntimeMessage = ToggleCommandBarMessage | SubmitTaskMessage | ExecuteActionsMessage;
+export type RuntimeMessage = ToggleCommandBarMessage | ShowResultMessage | SubmitTaskMessage | ExecuteActionsMessage;

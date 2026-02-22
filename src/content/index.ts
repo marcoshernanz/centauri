@@ -3,6 +3,7 @@ import type {
   ExecuteActionsMessage,
   ExecuteActionsResponse,
   RuntimeMessage,
+  ShowResultMessage,
   SubmitTaskMessage,
   SubmitTaskResponse
 } from "../shared/messages";
@@ -27,6 +28,19 @@ function initializeContentScript(): void {
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message.type === "ui/toggle-command-bar") {
       commandBar.toggle();
+      return;
+    }
+
+    if (message.type === "ui/show-result") {
+      commandBar.open();
+      if (!message.payload.ok) {
+        commandBar.setState("error");
+        commandBar.setOutput(message.payload.error ?? "Task failed.");
+        return;
+      }
+
+      commandBar.setState("done");
+      commandBar.setOutput(formatUiResultMessage(message));
       return;
     }
 
@@ -60,14 +74,22 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
 
   commandBar.setState("executing");
 
-  const response = await chrome.runtime.sendMessage<SubmitTaskMessage, SubmitTaskResponse>({
-    type: "agent/submit-task",
-    payload: {
-      prompt,
-      pageUrl: window.location.href,
-      pageTitle: document.title
-    }
-  });
+  let response: SubmitTaskResponse | undefined;
+
+  try {
+    response = await chrome.runtime.sendMessage<SubmitTaskMessage, SubmitTaskResponse>({
+      type: "agent/submit-task",
+      payload: {
+        prompt,
+        pageUrl: window.location.href,
+        pageTitle: document.title
+      }
+    });
+  } catch {
+    // During navigation the originating content script may be torn down.
+    // The background will push the final output to the active page via ui/show-result.
+    return;
+  }
 
   commandBar.setState("summarizing");
   await sleep(100);
@@ -120,5 +142,19 @@ function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): str
   lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} OK${failCount > 0 ? ` (${failCount} failed)` : ""}`);
   lines.push("");
   lines.push(response.payload.summary ?? "No summary returned.");
+  return lines.join("\n");
+}
+
+function formatUiResultMessage(message: ShowResultMessage): string {
+  const elapsedMs = message.payload.elapsedMs ?? 0;
+  const results = message.payload.results ?? [];
+  const okCount = results.filter((result) => result.ok).length;
+  const failCount = results.length - okCount;
+  const elapsedSeconds = elapsedMs > 0 ? (elapsedMs / 1000).toFixed(1) : "n/a";
+
+  const lines: string[] = [];
+  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} OK${failCount > 0 ? ` (${failCount} failed)` : ""}`);
+  lines.push("");
+  lines.push(message.payload.summary ?? "No summary returned.");
   return lines.join("\n");
 }

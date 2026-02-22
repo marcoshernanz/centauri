@@ -9,6 +9,7 @@ import type {
   ExecuteActionsMessage,
   ExecuteActionsResponse,
   RuntimeMessage,
+  ShowResultMessage,
   SubmitTaskMessage,
   SubmitTaskResponse
 } from "../shared/messages";
@@ -123,6 +124,7 @@ chrome.runtime.onMessage.addListener(
 );
 
 async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.MessageSender): Promise<SubmitTaskResponse> {
+  const runStartedAt = Date.now();
   const trimmedPrompt = message.payload.prompt.trim();
 
   if (!trimmedPrompt) {
@@ -138,15 +140,23 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   const agentConfig = await loadAgentConfig();
   const claudeConfig = await loadClaudeConfig();
 
+  let response: SubmitTaskResponse;
+
   if (isHackerNewsTask(trimmedPrompt, message.payload.pageUrl)) {
-    return runHackerNewsFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    response = await runHackerNewsFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    await pushUiResult(tabId, response, Date.now() - runStartedAt);
+    return response;
   }
 
   if (isGmailTask(trimmedPrompt, message.payload.pageUrl)) {
-    return runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    response = await runGmailFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
+    await pushUiResult(tabId, response, Date.now() - runStartedAt);
+    return response;
   }
 
-  return runGenericFlow(tabId, trimmedPrompt, message.payload.pageTitle, message.payload.pageUrl, claudeConfig, agentConfig);
+  response = await runGenericFlow(tabId, trimmedPrompt, message.payload.pageTitle, message.payload.pageUrl, claudeConfig, agentConfig);
+  await pushUiResult(tabId, response, Date.now() - runStartedAt);
+  return response;
 }
 
 async function runHackerNewsFlow(
@@ -1247,4 +1257,37 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function pushUiResult(tabId: number, response: SubmitTaskResponse, elapsedMs: number): Promise<void> {
+  const message: ShowResultMessage = {
+    type: "ui/show-result",
+    payload: {
+      ok: response.ok,
+      summary: response.payload.summary,
+      error: response.payload.error,
+      results: response.payload.results ?? [],
+      elapsedMs
+    }
+  };
+
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+    return;
+  } catch (error: unknown) {
+    if (!isNoReceiverError(error)) {
+      return;
+    }
+  }
+
+  const injected = await injectContentScript(tabId);
+  if (!injected) {
+    return;
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch {
+    // Best effort only.
+  }
 }

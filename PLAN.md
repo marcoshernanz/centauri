@@ -303,6 +303,11 @@ Each action payload includes:
     - replaced raw Gmail fallback output with structured snapshot/priorities/actions summary in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
   - Re-verified summary-quality refinements with `npm run typecheck` and `npm run build`.
   - Further refined Gmail fallback summary style in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to synthesize category-based one-line summaries (security/billing/subscription/travel/event/general) without clipped raw snippet output.
+  - Fixed result-panel disappearance across navigation (notably on Hacker News) by adding background-to-content final-result push messaging (`ui/show-result`) and content-side re-open/render handling in:
+    - `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`
+    - `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`
+    - `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`
+  - Re-verified navigation-output persistence fix with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
