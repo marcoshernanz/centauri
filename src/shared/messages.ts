@@ -2,6 +2,12 @@ import type { ActionExecutionResult, AgentAction, ExecutionLimits } from "./acti
 
 export type UIState = "idle" | "planning" | "executing" | "summarizing" | "done" | "error";
 
+export type PageContextSnapshot = {
+  urlPath: string;
+  headings: string[];
+  candidates: string[];
+};
+
 export type ToggleCommandBarMessage = {
   type: "ui/toggle-command-bar";
 };
@@ -14,6 +20,8 @@ export type ShowResultMessage = {
     error?: string;
     results?: ActionExecutionResult[];
     elapsedMs?: number;
+    partial?: boolean;
+    warnings?: string[];
   };
 };
 
@@ -23,6 +31,7 @@ export type SubmitTaskMessage = {
     prompt: string;
     pageUrl: string;
     pageTitle: string;
+    pageContext: PageContextSnapshot;
   };
 };
 
@@ -33,6 +42,8 @@ export type SubmitTaskResponse = {
     summary?: string;
     error?: string;
     results?: ActionExecutionResult[];
+    partial?: boolean;
+    warnings?: string[];
   };
 };
 

@@ -1,4 +1,6 @@
+import { buildPlannerCompactContext } from "./context";
 import type { ActionExecutionResult } from "../shared/actions";
+import type { PageContextSnapshot } from "../shared/messages";
 
 export function buildPlannerSystemPrompt(maxActions = 4): string {
   return [
@@ -21,24 +23,21 @@ export function buildPlannerUserPrompt(input: {
   iteration: number;
   latestExtract: string;
   previousResults: ActionExecutionResult[];
+  pageContext: PageContextSnapshot;
 }): string {
-  const compactResults = input.previousResults.slice(-8).map((result) => ({
-    actionId: result.actionId,
-    type: result.type,
-    ok: result.ok,
-    error: result.error,
-    textPreview: result.data?.text ? summarize(result.data.text, 180) : undefined,
-    itemsPreview: result.data?.items?.slice(0, 3)
-  }));
+  const compactContext = buildPlannerCompactContext({
+    pageTitle: input.pageTitle,
+    pageUrl: input.pageUrl,
+    iteration: input.iteration,
+    latestExtract: input.latestExtract,
+    previousResults: input.previousResults,
+    pageContext: input.pageContext
+  });
 
   return [
     `Task: ${input.task}`,
-    `Page title: ${input.pageTitle}`,
-    `Page url: ${input.pageUrl}`,
-    `Iteration: ${input.iteration}`,
-    `Latest extracted preview: ${summarize(input.latestExtract, 280)}`,
-    "Previous execution results:",
-    JSON.stringify(compactResults),
+    "Compact context JSON (URL/title/candidates/snippets):",
+    JSON.stringify(compactContext),
     "Return next JSON action batch."
   ].join("\n\n");
 }

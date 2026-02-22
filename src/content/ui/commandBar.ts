@@ -1,3 +1,4 @@
+import type { ActionExecutionResult } from "../../shared/actions";
 import type { UIState } from "../../shared/messages";
 
 type SubmitHandler = (prompt: string) => Promise<void>;
@@ -18,8 +19,11 @@ export class CommandBar {
   private readonly hint: HTMLSpanElement;
   private readonly progress: HTMLDivElement;
   private readonly output: HTMLPreElement;
+  private readonly traceToggle: HTMLButtonElement;
+  private readonly trace: HTMLPreElement;
   private readonly form: HTMLFormElement;
   private isOpen = false;
+  private traceVisible = false;
   private onSubmit: SubmitHandler;
 
   constructor(onSubmit: SubmitHandler) {
@@ -54,11 +58,27 @@ export class CommandBar {
     this.output.className = "nwa-output";
     this.output.textContent = "";
 
+    this.traceToggle = document.createElement("button");
+    this.traceToggle.type = "button";
+    this.traceToggle.className = "nwa-trace-toggle nwa-hidden";
+    this.traceToggle.textContent = "Show Steps";
+    this.traceToggle.addEventListener("click", () => {
+      this.traceVisible = !this.traceVisible;
+      this.trace.classList.toggle("nwa-hidden", !this.traceVisible);
+      this.traceToggle.textContent = this.traceVisible ? "Hide Steps" : "Show Steps";
+    });
+
+    this.trace = document.createElement("pre");
+    this.trace.className = "nwa-trace nwa-hidden";
+    this.trace.textContent = "";
+
     this.form.appendChild(this.input);
     this.form.appendChild(this.status);
     this.root.appendChild(this.form);
     this.root.appendChild(progressTrack);
     this.root.appendChild(this.output);
+    this.root.appendChild(this.traceToggle);
+    this.root.appendChild(this.trace);
     this.root.appendChild(this.hint);
 
     this.form.addEventListener("submit", (event) => {
@@ -109,6 +129,31 @@ export class CommandBar {
 
   clearOutput(): void {
     this.output.textContent = "";
+  }
+
+  clearTrace(): void {
+    this.trace.textContent = "";
+    this.traceVisible = false;
+    this.trace.classList.add("nwa-hidden");
+    this.traceToggle.classList.add("nwa-hidden");
+    this.traceToggle.textContent = "Show Steps";
+  }
+
+  setTrace(results: ActionExecutionResult[]): void {
+    if (results.length === 0) {
+      this.clearTrace();
+      return;
+    }
+
+    const lines = results.map((result, index) => {
+      const status = result.ok ? "OK" : "FAIL";
+      const selector = result.data?.selectorUsed ? ` | selector=${result.data.selectorUsed}` : "";
+      const error = result.error ? ` | error=${result.error}` : "";
+      return `${index + 1}. ${result.type} -> ${status} (${result.durationMs}ms, attempts=${result.attempts})${selector}${error}`;
+    });
+
+    this.trace.textContent = lines.join("\n");
+    this.traceToggle.classList.remove("nwa-hidden");
   }
 
   private async handleSubmit(): Promise<void> {

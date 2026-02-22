@@ -154,7 +154,15 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
     return response;
   }
 
-  response = await runGenericFlow(tabId, trimmedPrompt, message.payload.pageTitle, message.payload.pageUrl, claudeConfig, agentConfig);
+  response = await runGenericFlow(
+    tabId,
+    trimmedPrompt,
+    message.payload.pageTitle,
+    message.payload.pageUrl,
+    message.payload.pageContext,
+    claudeConfig,
+    agentConfig
+  );
   await pushUiResult(tabId, response, Date.now() - runStartedAt);
   return response;
 }
@@ -279,14 +287,15 @@ async function runHackerNewsFlow(
       )
     : null;
 
-  return {
-    ok: true,
-    payload: {
-      state: "done",
-      summary: claudeSummary ?? deterministicSummary,
-      results: allResults
-    }
-  };
+  const warnings: string[] = [];
+  if (articleSummaries.length < targetCount) {
+    warnings.push(`Only ${articleSummaries.length} of ${targetCount} requested articles were processed.`);
+  }
+  if (allResults.some((result) => !result.ok)) {
+    warnings.push("Some navigation/extraction actions failed during article traversal.");
+  }
+
+  return toSuccess(claudeSummary ?? deterministicSummary, allResults, warnings);
 }
 
 async function runGmailFlow(
@@ -373,14 +382,15 @@ async function runGmailFlow(
       )
     : null;
 
-  return {
-    ok: true,
-    payload: {
-      state: "done",
-      summary: claudeSummary ?? deterministicSummary,
-      results: allResults
-    }
-  };
+  const warnings: string[] = [];
+  if (emailSummaries.length < targetCount) {
+    warnings.push(`Only ${emailSummaries.length} of ${targetCount} requested unread emails were processed.`);
+  }
+  if (allResults.some((result) => !result.ok)) {
+    warnings.push("Some inbox/thread actions failed; summary may be partial.");
+  }
+
+  return toSuccess(claudeSummary ?? deterministicSummary, allResults, warnings);
 }
 
 async function runGenericFlow(
@@ -388,11 +398,12 @@ async function runGenericFlow(
   prompt: string,
   pageTitle: string,
   pageUrl: string,
+  pageContext: SubmitTaskMessage["payload"]["pageContext"],
   claudeConfig: ClaudeConfig | null,
   agentConfig: AgentConfig
 ): Promise<SubmitTaskResponse> {
   if (claudeConfig) {
-    const planned = await runClaudePlannerLoop(tabId, prompt, pageTitle, pageUrl, claudeConfig, agentConfig);
+    const planned = await runClaudePlannerLoop(tabId, prompt, pageTitle, pageUrl, pageContext, claudeConfig, agentConfig);
     if (planned) {
       return planned;
     }
@@ -431,14 +442,11 @@ async function runGenericFlow(
       )
     : null;
 
-  return {
-    ok: true,
-    payload: {
-      state: "done",
-      summary: claudeSummary ?? deterministicSummary,
-      results: outcome.payload.results
-    }
-  };
+  const warnings = outcome.payload.results.some((result) => !result.ok)
+    ? ["Some actions failed during extraction; summary may be partial."]
+    : [];
+
+  return toSuccess(claudeSummary ?? deterministicSummary, outcome.payload.results, warnings);
 }
 
 async function runClaudePlannerLoop(
@@ -446,6 +454,7 @@ async function runClaudePlannerLoop(
   prompt: string,
   pageTitle: string,
   pageUrl: string,
+  pageContext: SubmitTaskMessage["payload"]["pageContext"],
   claudeConfig: ClaudeConfig,
   agentConfig: AgentConfig
 ): Promise<SubmitTaskResponse | null> {
@@ -460,6 +469,7 @@ async function runClaudePlannerLoop(
       task: prompt,
       pageTitle,
       pageUrl,
+      pageContext,
       iteration,
       latestExtract,
       previousResults: allResults,
@@ -513,14 +523,11 @@ async function runClaudePlannerLoop(
       agentConfig.claude.summaryMaxTokens
     )) ?? buildGenericSummary(prompt, pageTitle, pageUrl, allResults);
 
-  return {
-    ok: true,
-    payload: {
-      state: "done",
-      summary,
-      results: allResults
-    }
-  };
+  const warnings = allResults.some((result) => !result.ok)
+    ? ["Planner loop completed with some failed actions."]
+    : [];
+
+  return toSuccess(summary, allResults, warnings);
 }
 
 async function planActionsWithClaude(input: {
@@ -528,6 +535,7 @@ async function planActionsWithClaude(input: {
   task: string;
   pageTitle: string;
   pageUrl: string;
+  pageContext: SubmitTaskMessage["payload"]["pageContext"];
   iteration: number;
   latestExtract: string;
   previousResults: ActionExecutionResult[];
@@ -543,6 +551,7 @@ async function planActionsWithClaude(input: {
         task: input.task,
         pageTitle: input.pageTitle,
         pageUrl: input.pageUrl,
+        pageContext: input.pageContext,
         iteration: input.iteration,
         latestExtract: input.latestExtract,
         previousResults: input.previousResults
@@ -1243,14 +1252,39 @@ async function injectContentScript(tabId: number): Promise<boolean> {
 }
 
 function toError(error: string, results: ActionExecutionResult[] = []): SubmitTaskResponse {
+  const warnings = results.some((result) => !result.ok) ? ["Execution ended with failures."] : [];
   return {
     ok: false,
     payload: {
       state: "error",
       error,
-      results
+      results,
+      partial: results.length > 0,
+      warnings
     }
   };
+}
+
+function toSuccess(summary: string, results: ActionExecutionResult[], warnings: string[] = []): SubmitTaskResponse {
+  const runtimeWarnings = [...warnings];
+  if (results.some((result) => !result.ok) && !runtimeWarnings.some((warning) => warning.includes("failed"))) {
+    runtimeWarnings.push("Some actions failed.");
+  }
+
+  return {
+    ok: true,
+    payload: {
+      state: "done",
+      summary,
+      results,
+      partial: runtimeWarnings.length > 0,
+      warnings: unique(runtimeWarnings)
+    }
+  };
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1267,7 +1301,9 @@ async function pushUiResult(tabId: number, response: SubmitTaskResponse, elapsed
       summary: response.payload.summary,
       error: response.payload.error,
       results: response.payload.results ?? [],
-      elapsedMs
+      elapsedMs,
+      partial: response.payload.partial,
+      warnings: response.payload.warnings
     }
   };
 

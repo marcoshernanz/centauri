@@ -66,9 +66,9 @@
 | T13 | P0 | DONE | Build Hacker News adapter: list top stories + article extraction flow | 1h | T11 | Prompt completes for top 5 stories on HN |
 | T14 | P0 | DONE | Build Gmail adapter: unread list + thread extraction flow | 1h 30m | T11 | Prompt completes for last 5 unread threads |
 | T15 | P0 | DONE | Harden Gmail selectors with fallback chains | 45m | T14 | Works across minor DOM variation in mailbox view |
-| T16 | P1 | TODO | Add compact context builder (URL/title/candidates/snippets only) | 45m | T11 | Token usage reduced; loop remains stable |
-| T17 | P1 | TODO | Add execution trace panel (“show steps”) | 45m | T03,T11 | User can inspect steps after run |
-| T18 | P1 | TODO | Add partial success UX and clear fallback messaging | 30m | T08,T12 | Partial outputs clearly labeled and useful |
+| T16 | P1 | DONE | Add compact context builder (URL/title/candidates/snippets only) | 45m | T11 | Token usage reduced; loop remains stable |
+| T17 | P1 | DONE | Add execution trace panel (“show steps”) | 45m | T03,T11 | User can inspect steps after run |
+| T18 | P1 | DONE | Add partial success UX and clear fallback messaging | 30m | T08,T12 | Partial outputs clearly labeled and useful |
 | T19 | P1 | DONE | Performance pass (wait tuning, extraction caps, context trimming) | 1h | T13,T14,T16 | End-to-end runtime materially reduced |
 | T20 | P1 | DONE | Reliability pass (invalid JSON repair + retry policy) | 45m | T10,T11 | Parser failures recovered in most cases |
 | T21 | P0 | DONE | End-to-end test script for Hacker News demo | 30m | T13,T12 | Reproducible green run with expected output quality |
@@ -188,7 +188,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-22
-- Current phase: Demo-ready package complete
+- Current phase: All planned MVP and polish tasks complete
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -207,6 +207,9 @@ Each action payload includes:
   - T13 Hacker News adapter (multi-page navigation loop)
   - T14 Gmail adapter (unread thread open/read/back loop)
   - T15 Gmail selector hardening
+  - T16 Compact context builder
+  - T17 Execution trace panel
+  - T18 Partial-success UX refinements
   - T19 Performance pass
   - T20 Reliability pass
   - T21 Hacker News acceptance script
@@ -216,9 +219,7 @@ Each action payload includes:
 - In progress:
   - None
 - Next up:
-  - T16 Compact context builder (optional)
-  - T17 Execution trace panel (optional)
-  - T18 Partial-success UX refinements (optional)
+  - Optional future enhancements only
 
 ## 11) Work Log
 - 2026-02-21:
@@ -308,6 +309,11 @@ Each action payload includes:
     - `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`
     - `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`
   - Re-verified navigation-output persistence fix with `npm run typecheck` and `npm run build`.
+  - Completed compact context + trace + partial UX tasks:
+    - T16: added compact planner context builder in `/Users/marcoshernanz/dev/hackeurope2/src/agent/context.ts`, expanded page-context snapshot payload in `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`, and wired context collection in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
+    - T17: added “Show Steps” trace panel in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts` and `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`, with step rendering from action execution results.
+    - T18: added explicit partial-result warnings and metadata across `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`, and `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
+  - Re-verified T16/T17/T18 with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -322,4 +328,4 @@ Each action payload includes:
 ## 13) Immediate Next Steps
 1. Run final manual checks with `npm run test:demo:hn` and `npm run test:demo:gmail`.
 2. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.
-3. Optional post-demo enhancement: compact context builder and step trace UX (T16-T18).
+3. If needed, only tune values in `/Users/marcoshernanz/dev/hackeurope2/agent.config.json` (no code changes).
