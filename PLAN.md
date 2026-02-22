@@ -87,6 +87,7 @@
 | T34 | P1 | DONE | Refine shell visual styling (logo/send accent, inner border cleanup, bottom box removal) | 20m | T33 | Logo and send button styling match requested orange accent, inner message border removed, logo centered, and completed-state status box removed |
 | T35 | P1 | DONE | Add favicon fallback + top spacing + readable summary formatting | 20m | T34 | Shell icon resolves from page favicon with fallback, history content has better top spacing, and summary text is rendered with clearer line structure |
 | T36 | P0 | DONE | Restore Centuri logo identity and switch TTS to ElevenLabs API | 30m | T35 | Shell icon no longer uses page favicon override, and speaker playback synthesizes audio via ElevenLabs with configured voice/model env vars |
+| T37 | P1 | DONE | Add `DEMOS.md` with canonical live-demo prompts | 10m | T24 | `DEMOS.md` documents both official demos with copy-paste prompts (HN top 5 summary + Gmail triage/draft flow) |
 
 ## 5) Architecture Implementation Details
 
@@ -238,6 +239,7 @@ Each action payload includes:
   - T34 Shell visual refinements from user feedback
   - T35 Favicon fallback and readability formatting pass
   - T36 Logo identity + ElevenLabs TTS integration
+  - T37 Canonical demo prompts documented in `DEMOS.md`
 - In progress:
   - None
 - Next up:
@@ -384,6 +386,7 @@ Each action payload includes:
     - replaced browser `speechSynthesis` fallback path with ElevenLabs API audio synthesis/playback in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx`.
     - injected ElevenLabs env vars (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_SPEECH_PROFILE`) at build time via `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
   - Re-verified T36 with `npm run typecheck` and `npm run build`.
+  - Completed T37 demo prompt documentation by adding `/Users/marcoshernanz/dev/hackeurope2/DEMOS.md` with the two official live prompts (HN top-5 summary and Gmail triage + draft replies with no-send guardrail).
 
 ## 12) Risk & Fallback Matrix
 
