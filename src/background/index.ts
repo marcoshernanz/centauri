@@ -6,20 +6,26 @@ import {
   type ListedItem
 } from "../shared/actions";
 import type {
+  AgentRunMode,
   ExecuteActionsMessage,
   ExecuteActionsResponse,
   RuntimeMessage,
   ShowResultMessage,
   SubmitTaskMessage,
   SubmitTaskResponse,
+  TtsSynthesizeMessage,
+  TtsSynthesizeResponse,
   UIState
 } from "../shared/messages";
-import { callClaude, loadAgentConfig, loadClaudeConfig, type AgentConfig, type ClaudeConfig } from "../agent/claude";
+import { callClaude, callClaudeImageSummary, loadAgentConfig, loadClaudeConfig, type AgentConfig, type ClaudeConfig } from "../agent/claude";
+import { callGeminiImageSummary, loadGeminiConfig } from "../agent/gemini";
 import {
   buildGmailSummaryPrompt,
   buildGenericSummaryPrompt,
   buildGenericTraversalSummaryPrompt,
   buildHackerNewsSummaryPrompt,
+  buildReadOnlyDomPrompt,
+  buildReadOnlyDomSystemPrompt,
   buildPlannerRepairSystemPrompt,
   buildPlannerRepairUserPrompt,
   buildPlannerSystemPrompt,
@@ -109,6 +115,11 @@ const GMAIL_INBOX_RETURN_WAIT_SELECTORS = [
   "[role='main']"
 ] as const;
 
+type SelectedImageInput = {
+  src: string;
+  alt: string | null;
+};
+
 chrome.commands.onCommand.addListener(async (command: string) => {
   if (command !== TOGGLE_COMMAND) {
     return;
@@ -126,8 +137,20 @@ chrome.runtime.onMessage.addListener(
   (
     message: RuntimeMessage,
     sender: chrome.runtime.MessageSender,
-    sendResponse: (response: SubmitTaskResponse) => void
+    sendResponse: (response: SubmitTaskResponse | TtsSynthesizeResponse) => void
   ) => {
+    if (message.type === "tts/synthesize") {
+      void handleTtsSynthesize(message)
+        .then((response) => sendResponse(response))
+        .catch((error: unknown) => {
+          sendResponse({
+            ok: false,
+            error: error instanceof Error ? error.message : "TTS synthesis failed"
+          });
+        });
+      return true;
+    }
+
     if (message.type !== "agent/submit-task") {
       return;
     }
@@ -151,11 +174,66 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+async function handleTtsSynthesize(message: TtsSynthesizeMessage): Promise<TtsSynthesizeResponse> {
+  const { text, voiceId, modelId, apiKey } = message.payload;
+  if (!apiKey || !voiceId) {
+    return { ok: false, error: "Missing ElevenLabs configuration." };
+  }
+
+  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "audio/mpeg",
+      "xi-api-key": apiKey
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId || "eleven_multilingual_v2",
+      voice_settings: {
+        stability: 0.45,
+        similarity_boost: 0.75
+      }
+    })
+  });
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const raw = await response.text();
+      if (raw.trim()) {
+        detail = raw.slice(0, 220);
+      }
+    } catch {
+      // Keep default status detail.
+    }
+    return { ok: false, error: `ElevenLabs TTS request failed: ${detail}` };
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength === 0) {
+    return { ok: false, error: "ElevenLabs TTS returned empty audio." };
+  }
+
+  // Convert to base64 for message passing
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const audioBase64 = btoa(binary);
+
+  return { ok: true, audioBase64 };
+}
+
 async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.MessageSender): Promise<SubmitTaskResponse> {
   const runStartedAt = Date.now();
   const trimmedPrompt = message.payload.prompt.trim();
+  const selectedImage = normalizeSelectedImageInput(message.payload.selectedImage);
+  const agentMode = normalizeAgentRunMode(message.payload.agentMode);
 
-  if (!trimmedPrompt) {
+  if (!trimmedPrompt && !selectedImage) {
     return toError("Prompt cannot be empty");
   }
 
@@ -164,12 +242,38 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
     return toError("Cannot identify active tab");
   }
 
-  await showRunShellState(tabId, "executing");
+  if (selectedImage) {
+    await showRunShellState(tabId, "executing");
+    const imageResponse = await runGeminiImageFlow({
+      prompt: trimmedPrompt,
+      selectedImage,
+      pageUrl: message.payload.pageUrl,
+      pageTitle: message.payload.pageTitle
+    });
+    await pushUiResult(tabId, imageResponse, Date.now() - runStartedAt);
+    return imageResponse;
+  }
 
   const targetCount = parseRequestedCount(trimmedPrompt);
   const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
   const agentConfig = await loadAgentConfig();
   const claudeConfig = await loadClaudeConfig();
+
+  if (agentMode === "chat") {
+    await showRunShellState(tabId, "executing");
+    const chatResponse = await runReadOnlyDomFlow({
+      prompt: trimmedPrompt,
+      pageTitle: message.payload.pageTitle,
+      pageUrl: message.payload.pageUrl,
+      pageContext: message.payload.pageContext,
+      claudeConfig,
+      summaryMaxTokens: agentConfig.claude.summaryMaxTokens
+    });
+    await pushUiResult(tabId, chatResponse, Date.now() - runStartedAt);
+    return chatResponse;
+  }
+
+  await showRunShellState(tabId, "executing");
 
   let response: SubmitTaskResponse;
 
@@ -197,6 +301,97 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   );
   await pushUiResult(tabId, response, Date.now() - runStartedAt);
   return response;
+}
+
+async function runGeminiImageFlow(input: {
+  prompt: string;
+  selectedImage: SelectedImageInput;
+  pageUrl: string;
+  pageTitle: string;
+}): Promise<SubmitTaskResponse> {
+  // Resolve the image payload once for both providers.
+  let imagePayload: { mimeType: string; imageBase64: string };
+  try {
+    imagePayload = await resolveImagePayloadForGemini(input.selectedImage.src, input.pageUrl);
+  } catch (error: unknown) {
+    return toError(error instanceof Error ? error.message : "Failed to load selected image");
+  }
+
+  // Try Claude first (mandatory model, better contextual reasoning with vision).
+  const claudeConfig = await loadClaudeConfig();
+  if (claudeConfig) {
+    try {
+      const { system, user } = buildClaudeImagePrompt(input.prompt, input.selectedImage.alt, input.pageTitle, input.pageUrl);
+      const summary = await callClaudeImageSummary({
+        config: claudeConfig,
+        system,
+        prompt: user,
+        imageBase64: imagePayload.imageBase64,
+        mimeType: imagePayload.mimeType,
+        maxTokens: 1200
+      });
+      return toSuccess(summary, []);
+    } catch (claudeError: unknown) {
+      console.warn("Claude image analysis failed, falling back to Gemini:", claudeError);
+    }
+  }
+
+  // Fallback to Gemini.
+  const geminiConfig = await loadGeminiConfig();
+  if (!geminiConfig) {
+    return toError("Neither Claude nor Gemini API key is configured for image analysis.");
+  }
+
+  try {
+    const summary = await callGeminiImageSummary({
+      config: geminiConfig,
+      prompt: buildGeminiImagePrompt(input.prompt, input.selectedImage.alt, input.pageTitle, input.pageUrl),
+      imageBase64: imagePayload.imageBase64,
+      mimeType: imagePayload.mimeType,
+      maxOutputTokens: 1200
+    });
+
+    return toSuccess(summary, []);
+  } catch (error: unknown) {
+    return toError(error instanceof Error ? error.message : "Image analysis failed on both Claude and Gemini");
+  }
+}
+
+async function runReadOnlyDomFlow(input: {
+  prompt: string;
+  pageTitle: string;
+  pageUrl: string;
+  pageContext: SubmitTaskMessage["payload"]["pageContext"];
+  claudeConfig: ClaudeConfig | null;
+  summaryMaxTokens: number;
+}): Promise<SubmitTaskResponse> {
+  const warnings: string[] = [];
+  if (!hasPageContextEvidence(input.pageContext)) {
+    warnings.push("DOM context was limited on this page, so answer quality may be partial.");
+  }
+
+  if (input.claudeConfig) {
+    try {
+      const summary = await callClaude(
+        input.claudeConfig,
+        buildReadOnlyDomSystemPrompt(),
+        buildReadOnlyDomPrompt({
+          task: input.prompt,
+          pageTitle: input.pageTitle,
+          pageUrl: input.pageUrl,
+          pageContext: input.pageContext
+        }),
+        Math.max(450, Math.min(1600, input.summaryMaxTokens))
+      );
+      return toSuccess(summary.trim(), [], warnings);
+    } catch {
+      warnings.push("Anthropic returned no content, so a deterministic DOM fallback was used.");
+      return toSuccess(buildReadOnlyDomFallbackSummary(input.prompt, input.pageTitle, input.pageUrl, input.pageContext), [], warnings);
+    }
+  }
+
+  warnings.push("Anthropic API key is missing, so a deterministic DOM fallback was used.");
+  return toSuccess(buildReadOnlyDomFallbackSummary(input.prompt, input.pageTitle, input.pageUrl, input.pageContext), [], warnings);
 }
 
 async function runHackerNewsFlow(
@@ -1281,17 +1476,26 @@ function buildGenericSummary(
   results: ActionExecutionResult[]
 ): string {
   const text = getExtractedText(results);
+  const summary = buildReadableHighlight(text, 80);
+  if (!summary) {
+    return `I could not extract enough readable content to answer "${prompt}" reliably.`;
+  }
 
-  return [
-    "Page Summary",
-    `Task: ${prompt}`,
-    `Source page: ${pageTitle} (${pageUrl})`,
-    "",
-    "Summary:",
-    buildReadableHighlight(text, 65),
-    "",
-    `Execution: ${countOk(results)}/${results.length} actions completed`
-  ].join("\n");
+  return summary;
+}
+
+function buildReadOnlyDomFallbackSummary(
+  prompt: string,
+  pageTitle: string,
+  pageUrl: string,
+  pageContext: SubmitTaskMessage["payload"]["pageContext"]
+): string {
+  const bodySnippet = (pageContext.bodyTextSnippet ?? "").trim();
+  if (!bodySnippet) {
+    return `I couldn't find enough readable text on this page to answer "${prompt}" reliably yet.`;
+  }
+
+  return buildReadableHighlight(bodySnippet, 90);
 }
 
 function buildGenericTraversalSummary(
@@ -1302,11 +1506,8 @@ function buildGenericTraversalSummary(
 ): string {
   const completed = visited.filter((item) => item.ok).length;
   const lines: string[] = [];
-  lines.push("Cross-Page Summary");
-  lines.push(`Task: ${prompt}`);
-  lines.push(`I processed ${completed} of ${requestedCount} target pages.`);
+  lines.push(`I reviewed ${completed} of ${requestedCount} pages for "${prompt}".`);
   lines.push("");
-  lines.push("Item Highlights");
 
   visited.forEach((item, index) => {
     lines.push(`${index + 1}. ${item.title}`);
@@ -1314,10 +1515,9 @@ function buildGenericTraversalSummary(
     lines.push(`   Source: ${item.url}`);
   });
 
-  lines.push("");
-  lines.push(`Execution: ${countOk(results)}/${results.length} actions completed`);
   if (results.some((result) => !result.ok)) {
-    lines.push("Coverage note: some steps failed during navigation or extraction.");
+    lines.push("");
+    lines.push("Some pages could not be fully processed, so coverage may be partial.");
   }
 
   return lines.join("\n");
@@ -1496,6 +1696,192 @@ function buildReadableHighlight(value: string, maxWords: number): string {
   }
 
   return compact.endsWith(".") ? compact : `${compact}.`;
+}
+
+function hasPageContextEvidence(pageContext: SubmitTaskMessage["payload"]["pageContext"]): boolean {
+  return Boolean(
+    pageContext.headings.length > 0 ||
+      pageContext.candidates.length > 0 ||
+      (pageContext.bodyTextSnippet ?? "").trim().length >= 80
+  );
+}
+
+function normalizeAgentRunMode(rawMode: SubmitTaskMessage["payload"]["agentMode"]): AgentRunMode {
+  return rawMode === "chat" ? "chat" : "agentic";
+}
+
+function normalizeSelectedImageInput(raw: SubmitTaskMessage["payload"]["selectedImage"]): SelectedImageInput | null {
+  if (!raw || typeof raw.src !== "string") {
+    return null;
+  }
+
+  const src = raw.src.trim();
+  if (!src) {
+    return null;
+  }
+
+  const alt = typeof raw.alt === "string" ? raw.alt.trim() : "";
+  return { src, alt: alt || null };
+}
+
+function buildGeminiImagePrompt(userPrompt: string, altText: string | null, pageTitle: string, pageUrl: string): string {
+  const trimmedPrompt = userPrompt.trim();
+  const lines: string[] = [];
+  lines.push("You are an expert visual analyst helping a user understand an image from a webpage.");
+  lines.push(trimmedPrompt ? `User request: ${trimmedPrompt}` : "User request: Describe and analyze this image.");
+  lines.push(`Page title: ${pageTitle}`);
+  lines.push(`Page URL: ${pageUrl}`);
+  if (altText) {
+    lines.push(`Image alt text: ${altText}`);
+  }
+  lines.push("");
+  lines.push("Instructions:");
+  lines.push("- Focus exclusively on the meaningful visual content of the image (diagrams, photos, charts, illustrations, etc.).");
+  lines.push("- NEVER reproduce or list website UI elements visible in the image such as navigation bars, menus, sidebars, language selectors, tabs, breadcrumbs, font-size controls, theme toggles, or table-of-contents listings.");
+  lines.push("- If the image is a screenshot that includes browser or website chrome, ignore all UI/navigation elements and analyze only the primary content area.");
+  lines.push("- Use the page title, URL, and alt text as strong contextual clues to identify people, events, or topics in the image.");
+  lines.push("- Cross-reference visual details (clothing, setting, era, logos, text) with the page context to give an informed, specific answer.");
+  lines.push("- Answer the user's specific question directly. Do not just describe the image generically.");
+  lines.push("- Start directly with the answer in plain natural language.");
+  lines.push("- Default format: 2-3 focused paragraphs.");
+  lines.push("- If the user explicitly asks for bullets/table/JSON, follow that requested format.");
+  lines.push("- Avoid template openers like 'Here is information about ...' or 'The image shows ...'.");
+  lines.push("- If you cannot identify something with certainty, state your best inference based on context and note the uncertainty briefly.");
+  return lines.join("\n");
+}
+
+function buildClaudeImagePrompt(userPrompt: string, altText: string | null, pageTitle: string, pageUrl: string): { system: string; user: string } {
+  const trimmedPrompt = userPrompt.trim();
+
+  const system = [
+    "You are an expert visual analyst embedded in a browser extension.",
+    "The user has selected an image on a webpage and is asking about it.",
+    "You have access to the page context (title, URL, alt text) — use these as strong contextual signals to identify people, events, locations, and topics depicted in the image.",
+    "Cross-reference visual details (clothing, setting, era, logos, visible text, body language) with the page context to produce specific, informed answers.",
+    "CRITICAL: Focus exclusively on the meaningful visual content of the image (diagrams, photos, charts, illustrations, etc.).",
+    "NEVER reproduce or list website UI elements visible in the image such as navigation bars, menus, sidebars, language selectors, tabs, breadcrumbs, font-size controls, theme toggles, or table-of-contents listings.",
+    "If the image is a screenshot that includes browser or website chrome, completely ignore all UI/navigation elements and analyze only the primary content area.",
+    "Do NOT give generic image descriptions. Connect what you see to the page's subject matter.",
+    "Be direct and specific. Start with the answer, not a preamble.",
+    "Default to 2-3 focused paragraphs. Use bullets/table/JSON only if the user asks for it.",
+    "If unsure about a specific detail, state your best inference from context and note uncertainty in one short phrase."
+  ].join("\n");
+
+  const userLines: string[] = [];
+  userLines.push(trimmedPrompt ? trimmedPrompt : "Analyze and explain this image in detail.");
+  userLines.push("");
+  userLines.push("Page context:");
+  userLines.push(`- Title: ${pageTitle}`);
+  userLines.push(`- URL: ${pageUrl}`);
+  if (altText) {
+    userLines.push(`- Image alt text: ${altText}`);
+  }
+
+  return { system, user: userLines.join("\n") };
+}
+
+async function resolveImagePayloadForGemini(
+  imageSrc: string,
+  pageUrl: string
+): Promise<{ mimeType: string; imageBase64: string }> {
+  const DATA_URL_REGEX = /^data:([^;,]+);base64,(.+)$/i;
+  const MAX_IMAGE_BYTES = 7_500_000;
+
+  const dataUrlMatch = imageSrc.match(DATA_URL_REGEX);
+  if (dataUrlMatch) {
+    const mimeType = dataUrlMatch[1].trim() || "image/png";
+    const imageBase64 = dataUrlMatch[2].replace(/\s+/g, "");
+    const estimatedBytes = Math.floor((imageBase64.length * 3) / 4);
+    if (estimatedBytes > MAX_IMAGE_BYTES) {
+      throw new Error("Selected image is too large for Gemini processing.");
+    }
+    return { mimeType, imageBase64 };
+  }
+
+  const imageUrl = toAbsoluteUrl(imageSrc, pageUrl);
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch selected image (${response.status})`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength === 0) {
+    throw new Error("Selected image is empty.");
+  }
+  if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error("Selected image is too large for Gemini processing.");
+  }
+
+  const mimeType =
+    normalizeImageMimeType(response.headers.get("content-type")) ??
+    inferImageMimeTypeFromUrl(imageUrl) ??
+    "image/jpeg";
+
+  return {
+    mimeType,
+    imageBase64: arrayBufferToBase64(arrayBuffer)
+  };
+}
+
+function toAbsoluteUrl(resourceUrl: string, baseUrl: string): string {
+  try {
+    return new URL(resourceUrl, baseUrl).toString();
+  } catch {
+    return resourceUrl;
+  }
+}
+
+function normalizeImageMimeType(rawContentType: string | null): string | null {
+  if (!rawContentType) {
+    return null;
+  }
+
+  const mimeType = rawContentType.split(";")[0]?.trim().toLowerCase();
+  if (!mimeType || !mimeType.startsWith("image/")) {
+    return null;
+  }
+
+  return mimeType;
+}
+
+function inferImageMimeTypeFromUrl(imageUrl: string): string | null {
+  const lower = imageUrl.toLowerCase();
+  if (lower.includes(".png")) {
+    return "image/png";
+  }
+  if (lower.includes(".webp")) {
+    return "image/webp";
+  }
+  if (lower.includes(".gif")) {
+    return "image/gif";
+  }
+  if (lower.includes(".svg")) {
+    return "image/svg+xml";
+  }
+  if (lower.includes(".bmp")) {
+    return "image/bmp";
+  }
+  if (lower.includes(".avif")) {
+    return "image/avif";
+  }
+  if (lower.includes(".jpg") || lower.includes(".jpeg")) {
+    return "image/jpeg";
+  }
+
+  return null;
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
 }
 
 function parseRequestedCount(prompt: string): number {

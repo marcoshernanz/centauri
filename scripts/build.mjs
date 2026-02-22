@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 
 const envValues = await loadDotEnv();
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? envValues.ANTHROPIC_API_KEY ?? "";
+const geminiApiKey = process.env.GEMINI_API_KEY ?? envValues.GEMINI_API_KEY ?? "";
+const geminiModel = process.env.GEMINI_MODEL ?? envValues.GEMINI_MODEL ?? "gemini-2.5-flash";
 const elevenlabsApiKey = process.env.ELEVENLABS_API_KEY ?? envValues.ELEVENLABS_API_KEY ?? "";
 const elevenlabsVoiceId = process.env.ELEVENLABS_VOICE_ID ?? envValues.ELEVENLABS_VOICE_ID ?? "";
 const elevenlabsSpeechProfile =
@@ -33,6 +35,8 @@ for (const item of entries) {
     legalComments: "none",
     define: {
       __NWA_ANTHROPIC_API_KEY__: JSON.stringify(anthropicApiKey),
+      __NWA_GEMINI_API_KEY__: JSON.stringify(geminiApiKey),
+      __NWA_GEMINI_MODEL__: JSON.stringify(geminiModel),
       __NWA_ELEVENLABS_API_KEY__: JSON.stringify(elevenlabsApiKey),
       __NWA_ELEVENLABS_VOICE_ID__: JSON.stringify(elevenlabsVoiceId),
       __NWA_ELEVENLABS_SPEECH_PROFILE__: JSON.stringify(elevenlabsSpeechProfile)

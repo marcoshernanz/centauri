@@ -1,18 +1,34 @@
 import { createRoot, type Root } from "react-dom/client";
 import type { ActionExecutionResult } from "../../shared/actions";
-import type { UIState } from "../../shared/messages";
-import { ShellApp, type CompletedTaskModel, type MenuOption, type ShellCallbacks, type ShellViewModel } from "./shell";
+import type { AgentRunMode, TtsSynthesizeMessage, TtsSynthesizeResponse, UIState } from "../../shared/messages";
+import {
+  ShellApp,
+  type CompletedTaskModel,
+  type MenuOption,
+  type SelectedImageInput,
+  type ShellCallbacks,
+  type ShellViewModel
+} from "./shell";
 
-type SubmitHandler = (prompt: string) => Promise<void>;
+type SubmitPayload = {
+  prompt: string;
+  agentMode: AgentRunMode;
+  selectedImage: SelectedImageInput | null;
+};
+
+type SubmitHandler = (payload: SubmitPayload) => Promise<void>;
 type ActivateHandler = (id: string) => void;
 type CloseHandler = (id: string) => void;
+type AgentModeChangeHandler = (mode: AgentRunMode) => void;
 
 type CommandBarOptions = {
   id: string;
   zIndex: number;
+  initialAgentMode: AgentRunMode;
   onSubmit: SubmitHandler;
   onActivate: ActivateHandler;
   onClose: CloseHandler;
+  onAgentModeChange: AgentModeChangeHandler;
 };
 
 declare const __NWA_ELEVENLABS_API_KEY__: string;
@@ -71,6 +87,126 @@ const MENU_OPTIONS: MenuOption[] = [
   { label: "Plan", value: "plan" }
 ];
 
+const IMAGE_PICK_CLASS = "nwa-image-pick-target";
+const IMAGE_PICK_MAX_TARGETS = 24;
+
+type ImagePickCallbacks = {
+  onPick: (selection: ImagePickSelection) => void;
+  onActivate: () => void;
+};
+
+type ImagePickRegistration = {
+  image: HTMLImageElement;
+  clickListener: (event: MouseEvent) => void;
+};
+
+type ImagePickSelection = {
+  previewSrc: string | null;
+  previewAlt: string | null;
+};
+
+const imagePickState: {
+  ownerId: string | null;
+  registrations: ImagePickRegistration[];
+} = {
+  ownerId: null,
+  registrations: []
+};
+
+function releaseImagePickTargets(): void {
+  for (const registration of imagePickState.registrations) {
+    registration.image.classList.remove(IMAGE_PICK_CLASS);
+    registration.image.removeEventListener("click", registration.clickListener, true);
+  }
+
+  imagePickState.registrations = [];
+}
+
+function deactivateImagePickTargets(ownerId: string): void {
+  if (imagePickState.ownerId !== ownerId) {
+    return;
+  }
+
+  releaseImagePickTargets();
+  imagePickState.ownerId = null;
+}
+
+function activateImagePickTargets(ownerId: string, callbacks: ImagePickCallbacks): void {
+  if (imagePickState.ownerId === ownerId && imagePickState.registrations.length > 0) {
+    return;
+  }
+
+  releaseImagePickTargets();
+  imagePickState.ownerId = ownerId;
+
+  const candidates = Array.from(document.querySelectorAll("img")).filter(isImagePickCandidate).slice(0, IMAGE_PICK_MAX_TARGETS);
+
+  for (const image of candidates) {
+    const clickListener = (event: MouseEvent): void => {
+      if (imagePickState.ownerId !== ownerId) {
+        return;
+      }
+
+      // Ignore synthetic clicks from the executor; only react to user interaction.
+      if (!event.isTrusted) {
+        return;
+      }
+
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      callbacks.onActivate();
+      callbacks.onPick(buildImageSelection(image));
+    };
+
+    image.classList.add(IMAGE_PICK_CLASS);
+    image.addEventListener("click", clickListener, true);
+    imagePickState.registrations.push({ image, clickListener });
+  }
+}
+
+function isImagePickCandidate(image: HTMLImageElement): boolean {
+  if (image.closest("[id^='nwa-shell-host-']")) {
+    return false;
+  }
+
+  const rect = image.getBoundingClientRect();
+  if (rect.width < 36 || rect.height < 36) {
+    return false;
+  }
+
+  if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= window.innerHeight || rect.left >= window.innerWidth) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(image);
+  if (style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity) <= 0.1) {
+    return false;
+  }
+
+  return Boolean(image.currentSrc || image.src);
+}
+
+function buildImageSelection(image: HTMLImageElement): ImagePickSelection {
+  const previewSrc = normalizeInlineText(image.currentSrc || image.src || "");
+  const previewAlt = normalizeInlineText(
+    image.alt || image.getAttribute("aria-label") || image.getAttribute("title") || ""
+  );
+
+  return {
+    previewSrc: previewSrc || null,
+    previewAlt: previewAlt || null
+  };
+}
+
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+
 export class CommandBar {
   private readonly id: string;
   private readonly host: HTMLDivElement;
@@ -78,7 +214,9 @@ export class CommandBar {
   private readonly onSubmit: SubmitHandler;
   private readonly onActivate: ActivateHandler;
   private readonly onClose: CloseHandler;
+  private readonly onAgentModeChange: AgentModeChangeHandler;
   private readonly hostMouseDownListener: () => void;
+  private readonly defaultAgentMode: AgentRunMode;
 
   private isOpen = false;
   private disposed = false;
@@ -91,6 +229,8 @@ export class CommandBar {
   private findings: string[] = [];
   private traceResults: ActionExecutionResult[] = [];
   private completedTasks: CompletedTaskModel[] = [];
+  private selectedImagePreviewSrc: string | null = null;
+  private selectedImagePreviewAlt: string | null = null;
   private activePrompt: string | null = null;
   private promptEdited = false;
   private lastSubmittedPrompt = "";
@@ -100,6 +240,7 @@ export class CommandBar {
   private resized = false;
   private position: { left?: number; bottom?: number } = {};
   private size: { width?: number; height?: number } = {};
+  private agentMode: AgentRunMode;
   private readonly micSupported: boolean;
   private readonly ttsSupported: boolean;
   private readonly elevenlabsApiKey: string;
@@ -107,6 +248,9 @@ export class CommandBar {
   private readonly elevenlabsSpeechProfile: string;
   private micActive = false;
   private micBusy = false;
+  private micShouldAutoSubmit = false;
+  private micCapturedText = false;
+  private submittedViaMic = false;
   private ttsActive = false;
   private ttsBusy = false;
   private speechRecognition: SpeechRecognitionInstanceLike | null = null;
@@ -121,6 +265,9 @@ export class CommandBar {
     this.onSubmit = options.onSubmit;
     this.onActivate = options.onActivate;
     this.onClose = options.onClose;
+    this.onAgentModeChange = options.onAgentModeChange;
+    this.defaultAgentMode = options.initialAgentMode;
+    this.agentMode = options.initialAgentMode;
     this.micSupported = Boolean(this.getSpeechRecognitionCtor());
     this.elevenlabsApiKey = __NWA_ELEVENLABS_API_KEY__ ?? "";
     this.elevenlabsVoiceId = __NWA_ELEVENLABS_VOICE_ID__ ?? "";
@@ -142,7 +289,7 @@ export class CommandBar {
     document.documentElement.appendChild(this.host);
     this.root = createRoot(mountNode);
     this.hostMouseDownListener = () => {
-      this.onActivate(this.id);
+      this.activateShell();
     };
     this.host.addEventListener("mousedown", this.hostMouseDownListener);
 
@@ -161,30 +308,8 @@ export class CommandBar {
     return this.isOpen && !this.hiding;
   }
 
-  isPristineForHotkeyToggle(): boolean {
-    if (!this.isOpenAndVisible()) {
-      return false;
-    }
-
-    const hasTypedPrompt = this.promptDraft.trim().length > 0;
-    const hasOutput =
-      this.rawOutput.trim().length > 0 ||
-      this.summary !== null ||
-      this.findings.length > 0 ||
-      this.traceResults.length > 0 ||
-      this.completedTasks.length > 0;
-    const hasRunState = this.state !== "idle" || this.activePrompt !== null || this.lastSubmittedPrompt.length > 0;
-
-    return !(
-      hasTypedPrompt ||
-      hasOutput ||
-      hasRunState ||
-      this.promptEdited ||
-      this.pinned ||
-      this.collapsed ||
-      this.moved ||
-      this.resized
-    );
+  isPinned(): boolean {
+    return this.pinned;
   }
 
   toggle(): void {
@@ -211,7 +336,7 @@ export class CommandBar {
     }
     this.isOpen = true;
     this.hiding = false;
-    this.onActivate(this.id);
+    this.activateShell();
     this.render();
   }
 
@@ -226,8 +351,10 @@ export class CommandBar {
 
     this.stopMicCapture();
     this.stopSpeechOutput();
+    deactivateImagePickTargets(this.id);
     this.pinned = false;
     this.collapsed = false;
+    this.submittedViaMic = false;
     this.hiding = true;
     this.isOpen = true;
     this.render();
@@ -259,6 +386,7 @@ export class CommandBar {
 
     this.stopMicCapture();
     this.stopSpeechOutput();
+    deactivateImagePickTargets(this.id);
     this.host.removeEventListener("mousedown", this.hostMouseDownListener);
     this.root.unmount();
     this.host.remove();
@@ -266,6 +394,7 @@ export class CommandBar {
 
   setState(state: UIState): void {
     this.state = state;
+    this.syncImagePickTargets();
     this.render();
   }
 
@@ -276,6 +405,13 @@ export class CommandBar {
     this.rawOutput = text;
     this.recomputeOutputPresentation();
     this.render();
+
+    // Auto-play TTS when the output was triggered by a voice (mic) submission
+    // and we have a successful result (state will be set to "done" before setOutput).
+    if (this.submittedViaMic && this.ttsSupported && this.summary && this.state === "done") {
+      this.submittedViaMic = false;
+      void this.playElevenLabsAudio(this.summary);
+    }
   }
 
   clearOutput(): void {
@@ -285,6 +421,8 @@ export class CommandBar {
     this.rawOutput = "";
     this.summary = null;
     this.findings = [];
+    this.selectedImagePreviewSrc = null;
+    this.selectedImagePreviewAlt = null;
     this.render();
   }
 
@@ -369,15 +507,58 @@ export class CommandBar {
       .trim();
   }
 
+  private isPromptLocked(): boolean {
+    return this.state === "planning" || this.state === "executing" || this.state === "summarizing";
+  }
+
+  private activateShell(): void {
+    this.onActivate(this.id);
+    this.syncImagePickTargets();
+  }
+
+  private syncImagePickTargets(): void {
+    if (this.disposed || !this.isOpen || this.hiding || this.state !== "idle") {
+      deactivateImagePickTargets(this.id);
+      return;
+    }
+
+    activateImagePickTargets(this.id, {
+      onActivate: () => {
+        this.onActivate(this.id);
+      },
+      onPick: (selection: ImagePickSelection) => {
+        this.applyImagePrompt(selection);
+      }
+    });
+  }
+
+  private applyImagePrompt(selection: ImagePickSelection): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.activateShell();
+    this.promptEdited = true;
+    this.collapsed = false;
+    this.selectedImagePreviewSrc = selection.previewSrc;
+    this.selectedImagePreviewAlt = selection.previewAlt;
+    this.render();
+  }
+
   private getShellViewModel(): ShellViewModel {
     const statusText = STATUS_LABEL[this.state];
-    const showThinking = this.state === "planning" || this.state === "executing" || this.state === "summarizing";
+    const showThinking = this.isPromptLocked();
     const promptDisabled = showThinking;
+    const hasSelectedImage = Boolean(this.selectedImagePreviewSrc);
+    const canSubmit = !promptDisabled && (this.promptDraft.trim().length > 0 || hasSelectedImage);
 
     return {
       prompt: this.promptDraft,
       promptPlaceholder: "Ask Centauri",
       promptDisabled,
+      canSubmit,
+      agentMode: this.agentMode,
+      activePrompt: this.activePrompt,
       micActive: this.micActive,
       micBusy: this.micBusy,
       micDisabled: !this.micSupported,
@@ -396,6 +577,8 @@ export class CommandBar {
       sources: [],
       menuOptions: MENU_OPTIONS,
       completedTasks: this.completedTasks,
+      selectedImagePreviewSrc: this.selectedImagePreviewSrc,
+      selectedImagePreviewAlt: this.selectedImagePreviewAlt,
       hiding: this.hiding,
       collapsed: this.collapsed,
       pinned: this.pinned,
@@ -411,31 +594,47 @@ export class CommandBar {
       onPromptChange: (value: string) => {
         this.promptEdited = true;
         this.promptDraft = value;
-        this.onActivate(this.id);
+        this.activateShell();
+      },
+      onToggleAgentMode: () => {
+        this.activateShell();
+        this.agentMode = this.agentMode === "agentic" ? "chat" : "agentic";
+        this.promptEdited = true;
+        this.onAgentModeChange(this.agentMode);
+        this.render();
       },
       onSubmit: (value: string) => {
-        this.onActivate(this.id);
+        this.activateShell();
+        this.promptDraft = "";
+        this.submittedViaMic = false;
+        this.render();
         void this.handleSubmit(value);
       },
+      onClearSelectedImage: () => {
+        this.activateShell();
+        this.selectedImagePreviewSrc = null;
+        this.selectedImagePreviewAlt = null;
+        this.render();
+      },
       onMicToggle: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.toggleMicCapture();
       },
       onTtsToggle: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.toggleSpeechOutput();
       },
       onCancel: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.setState("error");
         this.setOutput("Run cancelled.");
       },
       onClose: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.close();
       },
       onRetry: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         const retryPrompt = this.lastSubmittedPrompt;
         if (!retryPrompt) {
           return;
@@ -452,29 +651,36 @@ export class CommandBar {
         this.resized = true;
       },
       onCollapse: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.collapsed = true;
         this.render();
       },
       onExpand: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.collapsed = false;
         this.render();
       },
       onTogglePin: () => {
-        this.onActivate(this.id);
+        this.activateShell();
         this.pinned = !this.pinned;
         this.render();
       },
       onActivate: () => {
-        this.onActivate(this.id);
+        this.activateShell();
       }
     };
   }
 
   private async handleSubmit(value: string): Promise<void> {
     const prompt = value.trim();
-    if (!prompt) {
+    const selectedImage: SelectedImageInput | null = this.selectedImagePreviewSrc
+      ? {
+          src: this.selectedImagePreviewSrc,
+          alt: this.selectedImagePreviewAlt ?? null
+        }
+      : null;
+
+    if (!prompt && !selectedImage) {
       this.setState("error");
       this.setOutput("Prompt cannot be empty.");
       return;
@@ -488,10 +694,13 @@ export class CommandBar {
       this.completedTasks = [...this.completedTasks, { prompt: this.activePrompt, summary: this.summary }].slice(-MAX_COMPLETED_TASKS);
     }
 
-    this.activePrompt = prompt;
+    this.activePrompt = prompt || "[Selected image]";
     this.promptEdited = true;
     this.lastSubmittedPrompt = prompt;
-    this.promptDraft = prompt;
+    // submittedViaMic is set by the STT onend auto-submit path; preserve it here.
+    this.promptDraft = "";
+    this.selectedImagePreviewSrc = null;
+    this.selectedImagePreviewAlt = null;
     this.rawOutput = "";
     this.summary = null;
     this.findings = [];
@@ -500,7 +709,11 @@ export class CommandBar {
     this.open();
     this.render();
 
-    await this.onSubmit(prompt);
+    await this.onSubmit({
+      prompt,
+      agentMode: this.agentMode,
+      selectedImage
+    });
   }
 
   private getSpeechRecognitionCtor(): SpeechRecognitionCtorLike | null {
@@ -525,6 +738,8 @@ export class CommandBar {
 
     const recognition = new ctor();
     this.speechBasePrompt = this.promptDraft;
+    this.micShouldAutoSubmit = true;
+    this.micCapturedText = false;
     recognition.lang = "en-US";
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -561,6 +776,7 @@ export class CommandBar {
 
       const nextPrompt = [this.speechBasePrompt, spoken].filter(Boolean).join(" ").trim();
       this.promptDraft = nextPrompt;
+      this.micCapturedText = true;
       this.render();
     };
 
@@ -568,14 +784,24 @@ export class CommandBar {
       this.micActive = false;
       this.micBusy = false;
       this.speechRecognition = null;
+      this.micShouldAutoSubmit = false;
+      this.micCapturedText = false;
       this.render();
     };
 
     recognition.onend = () => {
+      const shouldAutoSubmit = this.micShouldAutoSubmit && this.micCapturedText && !this.isPromptLocked();
       this.micActive = false;
       this.micBusy = false;
       this.speechRecognition = null;
+      this.micShouldAutoSubmit = false;
+      this.micCapturedText = false;
       this.render();
+
+      if (shouldAutoSubmit && this.promptDraft.trim()) {
+        this.submittedViaMic = true;
+        void this.handleSubmit(this.promptDraft);
+      }
     };
 
     this.speechRecognition = recognition;
@@ -595,19 +821,27 @@ export class CommandBar {
     if (!this.speechRecognition) {
       this.micActive = false;
       this.micBusy = false;
+      this.micShouldAutoSubmit = false;
+      this.micCapturedText = false;
       return;
     }
 
-    try {
-      this.speechRecognition.stop();
-    } catch {
-      // ignore stop errors
-    }
-
+    // Keep micShouldAutoSubmit and micCapturedText intact so that the
+    // asynchronous recognition.onend handler can still trigger auto-submit.
+    // Those flags are reset inside onend after the submit decision is made.
+    const recognition = this.speechRecognition;
     this.speechRecognition = null;
-    this.micActive = false;
-    this.micBusy = false;
-    this.render();
+
+    try {
+      recognition.stop();
+    } catch {
+      // ignore stop errors – fall through to reset state
+      this.micActive = false;
+      this.micBusy = false;
+      this.micShouldAutoSubmit = false;
+      this.micCapturedText = false;
+      this.render();
+    }
   }
 
   private toggleSpeechOutput(): void {
@@ -720,44 +954,49 @@ export class CommandBar {
       throw new Error("Missing ElevenLabs configuration.");
     }
 
-    const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.elevenlabsVoiceId)}`;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "audio/mpeg",
-        "xi-api-key": this.elevenlabsApiKey
-      },
-      body: JSON.stringify({
+    const message: TtsSynthesizeMessage = {
+      type: "tts/synthesize",
+      payload: {
         text,
-        model_id: this.elevenlabsSpeechProfile || "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.45,
-          similarity_boost: 0.75
-        }
-      }),
-      signal
-    });
-
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try {
-        const raw = await response.text();
-        if (raw.trim()) {
-          detail = raw.slice(0, 220);
-        }
-      } catch {
-        // Keep default status detail.
+        voiceId: this.elevenlabsVoiceId,
+        modelId: this.elevenlabsSpeechProfile || "eleven_multilingual_v2",
+        apiKey: this.elevenlabsApiKey
       }
-      throw new Error(`ElevenLabs TTS request failed: ${detail}`);
-    }
+    };
 
-    const audioBlob = await response.blob();
-    if (audioBlob.size === 0) {
-      throw new Error("ElevenLabs TTS returned empty audio.");
-    }
+    return new Promise<Blob>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
 
-    return audioBlob;
+      const onAbort = () => {
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      chrome.runtime.sendMessage(message, (response: TtsSynthesizeResponse) => {
+        signal.removeEventListener("abort", onAbort);
+
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message ?? "TTS message failed"));
+          return;
+        }
+
+        if (!response || !response.ok || !response.audioBase64) {
+          reject(new Error(response?.error ?? "TTS synthesis failed"));
+          return;
+        }
+
+        // Decode base64 to blob
+        const binaryString = atob(response.audioBase64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        resolve(new Blob([bytes], { type: "audio/mpeg" }));
+      });
+    });
   }
 
   private clearTtsAudioUrl(): void {

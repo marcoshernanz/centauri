@@ -1,5 +1,6 @@
 ﻿import { useRef, useEffect, useLayoutEffect, useCallback, useState } from "react";
 import { TextShimmer } from "../components/prompt-kit/text-shimmer";
+import type { AgentRunMode } from "../../shared/messages";
 import { CENTURI_LOGO } from "./centuri-logo";
 
 export type MenuOption = { label: string; value: string };
@@ -23,10 +24,18 @@ export type CompletedTaskModel = {
   summary: string | null;
 };
 
+export type SelectedImageInput = {
+  src: string;
+  alt: string | null;
+};
+
 export type ShellViewModel = {
   prompt: string;
   promptPlaceholder: string;
   promptDisabled: boolean;
+  canSubmit: boolean;
+  agentMode: AgentRunMode;
+  activePrompt: string | null;
   micActive: boolean;
   micBusy: boolean;
   micDisabled: boolean;
@@ -45,6 +54,8 @@ export type ShellViewModel = {
   sources: SourceModel[];
   menuOptions: MenuOption[];
   completedTasks: CompletedTaskModel[];
+  selectedImagePreviewSrc: string | null;
+  selectedImagePreviewAlt: string | null;
   hiding: boolean;
   collapsed: boolean;
   pinned: boolean;
@@ -56,7 +67,9 @@ export type ShellViewModel = {
 
 export type ShellCallbacks = {
   onPromptChange: (value: string) => void;
+  onToggleAgentMode: () => void;
   onSubmit: (value: string) => void;
+  onClearSelectedImage: () => void;
   onMicToggle: () => void;
   onTtsToggle: () => void;
   onCancel: () => void;
@@ -78,7 +91,7 @@ type ShellAppProps = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const isActiveState = (s: string) =>
-  s.startsWith("Planning") || s.startsWith("Executing") || s.startsWith("Replanning");
+  s.startsWith("Planning") || s.startsWith("Executing") || s.startsWith("Summarizing") || s.startsWith("Replanning");
 
 const SendIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -202,6 +215,8 @@ const useResize = (
 ) => {
   const MIN_WIDTH = 360;
   const MIN_HEIGHT = 86;
+  const MAX_WIDTH = 980;
+  const MAX_HEIGHT = 760;
   const VIEWPORT_PADDING = 8;
 
   const onResizeStart = useCallback(
@@ -256,10 +271,12 @@ const useResize = (
           nextTop = startTop + deltaY;
         }
 
-        const maxWidth = window.innerWidth - VIEWPORT_PADDING * 2;
-        const maxHeight = window.innerHeight - VIEWPORT_PADDING * 2;
-        nextWidth = clamp(nextWidth, MIN_WIDTH, Math.max(MIN_WIDTH, maxWidth));
-        nextHeight = clamp(nextHeight, MIN_HEIGHT, Math.max(MIN_HEIGHT, maxHeight));
+        const viewportMaxWidth = window.innerWidth - VIEWPORT_PADDING * 2;
+        const viewportMaxHeight = window.innerHeight - VIEWPORT_PADDING * 2;
+        const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, viewportMaxWidth));
+        const maxHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, viewportMaxHeight));
+        nextWidth = clamp(nextWidth, MIN_WIDTH, maxWidth);
+        nextHeight = clamp(nextHeight, MIN_HEIGHT, maxHeight);
 
         if (direction.includes("w")) {
           nextLeft = startLeft + (startWidth - nextWidth);
@@ -317,6 +334,7 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
   const hasPinSyncInitializedRef = useRef(false);
   const onPositionChangeRef = useRef(callbacks.onPositionChange);
   const onSizeChangeRef = useRef(callbacks.onSizeChange);
+  const canResize = view.summary !== null || view.findings.length > 0 || view.completedTasks.length > 0;
 
   useEffect(() => {
     onPositionChangeRef.current = callbacks.onPositionChange;
@@ -340,7 +358,7 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
     (width, height) => {
       onSizeChangeRef.current(width, height);
     },
-    false,
+    !canResize,
   );
 
   useEffect(() => { setLocalValue(view.prompt); }, [view.prompt]);
@@ -472,30 +490,40 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
   const hasResult = !!view.summary || view.findings.length > 0;
   const hasCompleted = view.completedTasks.length > 0;
   const hasHistory = hasCompleted || hasResult || showStatus;
+  const showActivePromptBubble = Boolean(view.activePrompt) && (view.showThinking || hasResult);
   const inputBarVisible = !view.pinned;
   const showPinButton = !view.collapsed && (view.pinned || view.showThinking || hasHistory);
   // Only offer to collapse once the task is fully done (not while planning/executing)
   const canCollapse = inputBarVisible && !active && !view.showThinking && (hasCompleted || hasResult);
   const showHistoryHeader = hasHistory && !view.collapsed && (canCollapse || view.pinned);
+  const canSubmitNow = !view.promptDisabled && (localValue.trim().length > 0 || Boolean(view.selectedImagePreviewSrc));
+  const agentModeLabel = view.agentMode === "agentic" ? "Agentic mode enabled" : "Chat mode enabled";
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setLocalValue(e.target.value);
     callbacks.onPromptChange(e.target.value);
   };
 
+  const submitCurrentInput = () => {
+    if (!canSubmitNow) {
+      return;
+    }
+
+    const valueToSubmit = localValue;
+    setLocalValue("");
+    callbacks.onPromptChange("");
+    callbacks.onSubmit(valueToSubmit);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (localValue.trim() && !view.promptDisabled) {
-        callbacks.onSubmit(localValue);
-      }
+      submitCurrentInput();
     }
   };
 
   const handleSend = () => {
-    if (localValue.trim() && !view.promptDisabled) {
-      callbacks.onSubmit(localValue);
-    }
+    submitCurrentInput();
   };
 
   const micBlocked = view.micDisabled && !view.micActive;
@@ -510,14 +538,19 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
         className={`sp-shell${view.hiding ? " sp-hiding" : ""}${view.collapsed ? " sp-collapsed" : ""}${view.pinned ? " sp-pinned" : ""}`}
         onMouseDown={callbacks.onActivate}
       >
-        <div className="sp-resize-handle sp-resize-handle--n" onMouseDown={(event) => onResizeStart("n", event)} />
-        <div className="sp-resize-handle sp-resize-handle--e" onMouseDown={(event) => onResizeStart("e", event)} />
-        <div className="sp-resize-handle sp-resize-handle--s" onMouseDown={(event) => onResizeStart("s", event)} />
-        <div className="sp-resize-handle sp-resize-handle--w" onMouseDown={(event) => onResizeStart("w", event)} />
-        <div className="sp-resize-handle sp-resize-handle--ne" onMouseDown={(event) => onResizeStart("ne", event)} />
-        <div className="sp-resize-handle sp-resize-handle--nw" onMouseDown={(event) => onResizeStart("nw", event)} />
-        <div className="sp-resize-handle sp-resize-handle--se" onMouseDown={(event) => onResizeStart("se", event)} />
-        <div className="sp-resize-handle sp-resize-handle--sw" onMouseDown={(event) => onResizeStart("sw", event)} />
+        <div className="sp-top-grab" onMouseDown={onDragStart} />
+        {canResize && (
+          <>
+            <div className="sp-resize-handle sp-resize-handle--n" onMouseDown={(event) => onResizeStart("n", event)} />
+            <div className="sp-resize-handle sp-resize-handle--e" onMouseDown={(event) => onResizeStart("e", event)} />
+            <div className="sp-resize-handle sp-resize-handle--s" onMouseDown={(event) => onResizeStart("s", event)} />
+            <div className="sp-resize-handle sp-resize-handle--w" onMouseDown={(event) => onResizeStart("w", event)} />
+            <div className="sp-resize-handle sp-resize-handle--ne" onMouseDown={(event) => onResizeStart("ne", event)} />
+            <div className="sp-resize-handle sp-resize-handle--nw" onMouseDown={(event) => onResizeStart("nw", event)} />
+            <div className="sp-resize-handle sp-resize-handle--se" onMouseDown={(event) => onResizeStart("se", event)} />
+            <div className="sp-resize-handle sp-resize-handle--sw" onMouseDown={(event) => onResizeStart("sw", event)} />
+          </>
+        )}
 
         {showPinButton && (
           <div className="sp-shell-actions">
@@ -553,7 +586,7 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
 
         {/* Static header strip with minimize button — sits above scroll area, never scrolls away */}
         {showHistoryHeader && (
-          <div className="sp-history-header" onMouseDown={onDragStart}>
+          <div className="sp-history-header">
             <button
               className={`sp-collapse-btn${canCollapse ? "" : " sp-collapse-btn--hidden"}`}
               type="button"
@@ -573,7 +606,6 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
           <div
             ref={scrollRef}
             className={`sp-history${view.collapsed ? " sp-history--hidden" : ""}`}
-            onMouseDown={onDragStart}
           >
             {/* Past completed tasks as message bubbles */}
             {view.completedTasks.map((task, i) => (
@@ -585,11 +617,28 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
               </div>
             ))}
 
+            {showActivePromptBubble && (
+              <div className="sp-msg-group">
+                <div className="sp-msg-user">{view.activePrompt}</div>
+              </div>
+            )}
+
             {/* Current result */}
             {hasResult && (
               <div className="sp-msg-group">
                 {view.summary && (
                   <div className="sp-msg-ai sp-msg-ai--current">
+                    <div className="sp-response-tools">
+                      <button
+                        className={`sp-response-tts-btn${view.ttsActive ? " sp-response-tts-btn--active" : ""}${view.ttsBusy ? " sp-response-tts-btn--busy" : ""}`}
+                        type="button"
+                        onClick={callbacks.onTtsToggle}
+                        disabled={ttsBlocked}
+                        title={view.ttsBusy ? "Generating speech" : view.ttsActive ? "Stop speech" : "Read response aloud"}
+                      >
+                        <SpeakerIcon />
+                      </button>
+                    </div>
                     {view.summary}
                     {view.findings.length > 0 && (
                       <ul className="sp-findings">
@@ -627,13 +676,22 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
         {/* Divider when history is shown and not collapsed */}
         {hasHistory && !view.collapsed && <div className="sp-divider" />}
 
-        <div className={`sp-bar${view.pinned ? " sp-bar--hidden" : ""}`} onMouseDown={onDragStart}>
+        <div className={`sp-bar${view.pinned ? " sp-bar--hidden" : ""}`}>
+          <button
+            className={`sp-logo-btn${view.agentMode === "agentic" ? " sp-logo-btn--agentic" : " sp-logo-btn--chat"}`}
+            type="button"
+            onClick={callbacks.onToggleAgentMode}
+            title={`${agentModeLabel}. Click to switch.`}
+            aria-label={`${agentModeLabel}. Click to switch.`}
+          >
             <img
-            className="sp-logo"
-            src={logoSrc}
-            alt="Centuri"
-            draggable={false}
-          />
+              className="sp-logo"
+              src={logoSrc}
+              alt="Centuri"
+              draggable={false}
+            />
+            <span className="sp-logo-mode">{view.agentMode === "agentic" ? "A" : "C"}</span>
+          </button>
 
             {/* Expand button — visible only when soft-collapsed and there's history to show */}
             {view.collapsed && hasHistory && (
@@ -648,6 +706,25 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
             )}
 
             <div className="sp-input-row">
+              {view.selectedImagePreviewSrc && (
+                <div className="sp-input-image-wrap" title={view.selectedImagePreviewAlt ?? "Selected image"}>
+                  <img
+                    className="sp-input-image"
+                    src={view.selectedImagePreviewSrc}
+                    alt={view.selectedImagePreviewAlt ?? "Selected image"}
+                    draggable={false}
+                  />
+                  <button
+                    className="sp-input-image-clear"
+                    type="button"
+                    onClick={callbacks.onClearSelectedImage}
+                    title="Remove selected image"
+                    aria-label="Remove selected image"
+                  >
+                    <CloseIcon />
+                  </button>
+                </div>
+              )}
               <textarea
                 ref={inputRef}
                 className="sp-input"
@@ -667,15 +744,6 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
               >
                 <MicIcon />
               </button>
-              <button
-              className={`sp-tts-btn${view.ttsActive ? " sp-tts-active" : ""}${view.ttsBusy ? " sp-tts-busy" : ""}`}
-              type="button"
-              onClick={callbacks.onTtsToggle}
-              disabled={ttsBlocked}
-              title={view.ttsBusy ? "Generating speech" : view.ttsActive ? "Stop speech" : "Read output aloud"}
-            >
-              <SpeakerIcon />
-            </button>
             {view.showThinking ? (
                 <button
                   className="sp-send-btn sp-stop"
@@ -687,10 +755,10 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
                 </button>
               ) : (
                 <button
-                  className={`sp-send-btn${(!localValue.trim() || view.promptDisabled) ? " sp-send-off" : ""}`}
+                  className={`sp-send-btn${!canSubmitNow ? " sp-send-off" : ""}`}
                   type="button"
                   onClick={handleSend}
-                  disabled={!localValue.trim() || view.promptDisabled}
+                  disabled={!canSubmitNow}
                   title="Send"
                 >
                   <SendIcon />
@@ -728,6 +796,22 @@ const SHELL_CSS = `
   from { opacity: 1; filter: blur(0); }
   to   { opacity: 0; filter: blur(2.5px); }
 }
+@keyframes sp-accent-in {
+  from {
+    box-shadow:
+      0 0 0 1px hsl(24.6 95% 53.1% / 0.6),
+      0 0 16px hsl(24.6 95% 53.1% / 0.38),
+      0 12px 28px hsl(222.2 84% 4.9% / 0.55),
+      0 3px 10px hsl(222.2 84% 4.9% / 0.38);
+  }
+  to {
+    box-shadow:
+      0 0 0 1px hsl(24.6 95% 53.1% / 0.34),
+      0 0 8px hsl(24.6 95% 53.1% / 0.2),
+      0 12px 28px hsl(222.2 84% 4.9% / 0.55),
+      0 3px 10px hsl(222.2 84% 4.9% / 0.38);
+  }
+}
 @keyframes sp-msg-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -752,19 +836,22 @@ const SHELL_CSS = `
   font-weight: 400 !important;
   text-shadow: none !important;
   background: var(--sp-slate-950);
-  border: 1px solid hsl(215.4 31.8% 16.9% / 0.9);
+  border: 1px solid hsl(24.6 95% 53.1% / 0.34);
   border-radius: 18px;
   opacity: 0.975;
   box-shadow:
+    0 0 0 1px hsl(24.6 95% 53.1% / 0.34),
+    0 0 8px hsl(24.6 95% 53.1% / 0.2),
     0 12px 28px hsl(222.2 84% 4.9% / 0.55),
     0 3px 10px hsl(222.2 84% 4.9% / 0.38);
   overflow: hidden;
-  animation: sp-in 520ms cubic-bezier(.16,.95,.21,1) both;
-  transition: opacity 200ms ease, box-shadow 200ms ease, filter 220ms ease;
+  animation: sp-in 520ms cubic-bezier(.16,.95,.21,1) both, sp-accent-in 360ms ease-out both;
+  transition: opacity 200ms ease, box-shadow 200ms ease, filter 220ms ease, border-color 200ms ease;
   user-select: none;
 }
 .sp-shell:hover {
   opacity: 0.99;
+  border-color: hsl(24.6 95% 53.1% / 0.46);
 }
 .sp-shell.sp-pinned {
   opacity: 1;
@@ -783,6 +870,19 @@ const SHELL_CSS = `
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.sp-top-grab {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 66px;
+  height: 16px;
+  z-index: 7;
+  cursor: grab;
+}
+.sp-top-grab:active {
+  cursor: grabbing;
 }
 
 .sp-resize-handle {
@@ -883,9 +983,50 @@ const SHELL_CSS = `
   line-height: 1.62;
   word-break: break-word;
   white-space: pre-line;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .sp-msg-ai--current {
   color: var(--sp-text);
+}
+.sp-msg-user {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.sp-response-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.sp-response-tts-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: hsl(215.4 31.8% 16.9% / 0.9);
+  color: var(--sp-text-dim);
+  transition: background 0.11s ease, color 0.11s ease;
+}
+.sp-response-tts-btn:hover:not(:disabled) {
+  background: hsl(215.3 19.3% 34.5% / 0.6);
+  color: var(--sp-text);
+}
+.sp-response-tts-btn:disabled {
+  color: rgba(255,255,255,0.26);
+  cursor: not-allowed;
+}
+.sp-response-tts-btn--active {
+  background: rgba(16,185,129,0.24) !important;
+  color: rgba(74,222,128,1) !important;
+}
+.sp-response-tts-btn--busy {
+  color: rgba(255,255,255,0.96) !important;
 }
 
 .sp-findings {
@@ -946,9 +1087,7 @@ const SHELL_CSS = `
   justify-content: flex-start;
   padding: 8px 10px 0;
   flex-shrink: 0;
-  cursor: grab;
 }
-.sp-history-header:active { cursor: grabbing; }
 
 /* ── Collapse button ──────────────────────────────────────── */
 .sp-collapse-btn {
@@ -1052,12 +1191,10 @@ const SHELL_CSS = `
   display: flex;
   flex-direction: column;
   gap: 12px;
-  cursor: grab;
   scrollbar-width: thin;
   scrollbar-color: hsl(215.4 31.8% 16.9% / 0.9) transparent;
   transition: max-height 0.22s cubic-bezier(.16,1,.3,1), opacity 0.18s ease, padding 0.18s ease;
 }
-.sp-history:active { cursor: grabbing; }
 .sp-history::-webkit-scrollbar { width: 4px; }
 .sp-history::-webkit-scrollbar-track { background: transparent; }
 .sp-history::-webkit-scrollbar-thumb { background: hsl(215.4 31.8% 16.9% / 0.9); border-radius: 4px; }
@@ -1077,12 +1214,35 @@ const SHELL_CSS = `
   align-items: center;
   gap: 9px;
   padding: 9px 10px;
-  cursor: grab;
 }
-.sp-bar:active { cursor: grabbing; }
 .sp-bar--hidden {
   visibility: hidden;
   pointer-events: none;
+}
+
+.sp-logo-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  padding: 0;
+  border-radius: 7px;
+  background: transparent;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.sp-logo-btn--agentic {
+  box-shadow: 0 0 0 1px hsl(24.6 95% 53.1% / 0.34);
+}
+.sp-logo-btn--chat {
+  box-shadow: 0 0 0 1px hsl(215.3 19.3% 34.5% / 0.68);
+}
+.sp-logo-btn:hover {
+  transform: scale(1.03);
 }
 
 .sp-logo {
@@ -1091,10 +1251,29 @@ const SHELL_CSS = `
   border-radius: 7px;
   object-fit: contain;
   background: transparent;
-  align-self: center;
   display: block;
-  flex-shrink: 0;
   opacity: 1;
+}
+
+.sp-logo-mode {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  border: 1px solid hsl(222.2 84% 4.9% / 0.85);
+  color: #fff;
+  background: hsl(24.6 95% 53.1% / 0.95);
+}
+.sp-logo-btn--chat .sp-logo-mode {
+  background: hsl(215.3 19.3% 34.5% / 0.95);
 }
 
 .sp-input-row {
@@ -1102,6 +1281,7 @@ const SHELL_CSS = `
   min-width: 0;
   display: flex;
   align-items: center;
+  gap: 6px;
   background: var(--sp-slate-950);
   border: none;
   border-radius: 11px;
@@ -1110,6 +1290,48 @@ const SHELL_CSS = `
 
 .sp-input-row:focus-within {
   background: var(--sp-slate-950);
+}
+
+.sp-input-image-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  margin-left: 6px;
+  border-radius: 7px;
+  border: 1px solid hsl(24.6 95% 53.1% / 0.66);
+  box-shadow:
+    0 0 0 1px hsl(24.6 95% 53.1% / 0.26),
+    0 0 8px hsl(24.6 95% 53.1% / 0.26);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sp-input-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sp-input-image-clear {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.94);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.sp-input-image-clear svg {
+  width: 9px;
+  height: 9px;
 }
 
 .sp-input {

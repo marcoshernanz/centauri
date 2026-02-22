@@ -6,7 +6,6 @@ import {
   type ListedItem,
   type TargetSpec
 } from "../../shared/actions";
-import { getVisualCursor } from "../dom/visualCursor";
 
 const NON_RETRYABLE_ACTIONS = new Set<AgentAction["type"]>(["OPEN_IN_SAME_TAB", "BACK", "DONE"]);
 
@@ -403,23 +402,13 @@ function mergeLimits(customLimits?: Partial<ExecutionLimits>): ExecutionLimits {
 }
 
 async function animateHumanClick(element: Element): Promise<void> {
-  try {
-    const cursor = getVisualCursor();
-    await cursor.moveToElement(element);
-    await cursor.pulse();
-  } catch {
-    // Animation failures should never block action execution.
-  }
+  void element;
+  return Promise.resolve();
 }
 
 async function animateHumanInspect(element: Element): Promise<void> {
-  try {
-    const cursor = getVisualCursor();
-    await cursor.moveToElement(element);
-    await sleep(randomBetween(70, 150));
-  } catch {
-    // Animation failures should never block action execution.
-  }
+  void element;
+  return Promise.resolve();
 }
 
 async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

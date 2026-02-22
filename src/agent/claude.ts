@@ -69,6 +69,17 @@ type AnthropicTextBlock = {
   text: string;
 };
 
+type AnthropicImageBlock = {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: string;
+    data: string;
+  };
+};
+
+type AnthropicContentBlock = AnthropicTextBlock | AnthropicImageBlock;
+
 type AnthropicResponse = {
   content?: AnthropicTextBlock[];
   error?: {
@@ -112,6 +123,72 @@ export async function callClaude(config: ClaudeConfig, system: string, user: str
 
     throw error;
   }
+}
+
+export async function callClaudeImageSummary(input: {
+  config: ClaudeConfig;
+  system: string;
+  prompt: string;
+  imageBase64: string;
+  mimeType: string;
+  maxTokens?: number;
+}): Promise<string> {
+  const model = input.config.model;
+  const maxTokens = input.maxTokens ?? 1200;
+
+  const userContent: AnthropicContentBlock[] = [
+    {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: input.mimeType,
+        data: input.imageBase64
+      }
+    },
+    {
+      type: "text",
+      text: input.prompt
+    }
+  ];
+
+  const response = await fetch(ANTHROPIC_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "anthropic-version": ANTHROPIC_VERSION,
+      "x-api-key": input.config.apiKey
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      temperature: input.config.temperature,
+      system: input.system,
+      messages: [
+        {
+          role: "user",
+          content: userContent
+        }
+      ]
+    })
+  });
+
+  const payload = (await response.json()) as AnthropicResponse;
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Claude Vision API request failed (${response.status})`);
+  }
+
+  const text = (payload.content ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  if (!text) {
+    throw new Error("Claude returned empty content for image analysis");
+  }
+
+  return text;
 }
 
 async function callClaudeWithModel(

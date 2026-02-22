@@ -138,55 +138,32 @@
   color: #fdba74;
 }
 
-.nwa-visual-cursor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 18px;
-  height: 18px;
-  margin-left: -9px;
-  margin-top: -9px;
-  border-radius: 999px;
-  background: radial-gradient(circle at 30% 25%, #ffffff 5%, #38bdf8 48%, #0284c7 100%);
-  border: 2px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.28), 0 7px 22px rgba(2, 132, 199, 0.45);
-  pointer-events: none;
-  z-index: 2147483647;
-  transform: translate(-999px, -999px);
-  transition: box-shadow 100ms ease, transform 24ms linear;
-}
-
-.nwa-visual-cursor-active {
-  box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.36), 0 8px 26px rgba(2, 132, 199, 0.55);
-}
-
-.nwa-visual-ripple {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 12px;
-  height: 12px;
-  margin-left: -6px;
-  margin-top: -6px;
-  border-radius: 999px;
-  border: 2px solid rgba(56, 189, 248, 0.65);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 2147483647;
-  transform: translate(-999px, -999px) scale(0.8);
-}
-
+.nwa-visual-cursor,
+.nwa-visual-cursor-active,
+.nwa-visual-ripple,
 .nwa-visual-ripple-animate {
-  animation: nwa-click-ripple 320ms ease-out forwards;
+  display: none !important;
 }
 
-@keyframes nwa-click-ripple {
-  0% {
-    opacity: 0.9;
-    transform: translate(var(--nwa-ripple-x, -999px), var(--nwa-ripple-y, -999px)) scale(0.8);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--nwa-ripple-x, -999px), var(--nwa-ripple-y, -999px)) scale(1.8);
-  }
+.nwa-image-pick-target {
+  outline: 3px solid rgba(251, 146, 60, 0.96) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 2px rgba(249, 115, 22, 0.48),
+    0 0 0 6px rgba(249, 115, 22, 0.22),
+    0 0 0 12px rgba(251, 146, 60, 0.1),
+    0 0 18px rgba(251, 146, 60, 0.4) !important;
+  border-radius: 8px !important;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'%3E%3Ccircle cx='13' cy='13' r='12' fill='%23f97316' fill-opacity='0.18'/%3E%3Cpath d='M8 5v8h3V9l3 4h2l-3-4h3L8 5Z' fill='%23fb923c'/%3E%3C/svg%3E") 4 4, pointer !important;
+  transition: box-shadow 90ms ease, outline-color 90ms ease, outline-offset 90ms ease !important;
+}
+
+.nwa-image-pick-target:hover {
+  outline-color: rgba(251, 146, 60, 0.96) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 2px rgba(249, 115, 22, 0.48),
+    0 0 0 6px rgba(249, 115, 22, 0.22),
+    0 0 0 12px rgba(251, 146, 60, 0.1),
+    0 0 18px rgba(251, 146, 60, 0.4) !important;
 }

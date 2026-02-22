@@ -54,6 +54,16 @@ export function buildSummarySystemPrompt(): string {
   ].join("\n");
 }
 
+export function buildReadOnlyDomSystemPrompt(): string {
+  return [
+    "You are a helpful assistant answering from a browser DOM snapshot.",
+    "Return only the final answer text in natural language.",
+    "Do not use headings, labels, JSON, bullets, or markdown unless the user explicitly asks for a list.",
+    "Do not mention tools, actions, clicks, navigation, or hidden processing.",
+    "If context is insufficient, add one short uncertainty sentence."
+  ].join("\n");
+}
+
 export function buildPlannerRepairSystemPrompt(): string {
   return [
     "You repair malformed browser-planner JSON.",
@@ -144,6 +154,31 @@ export function buildGenericTraversalSummaryPrompt(input: {
     "Write a concise answer with sections: Overall Summary, Item Highlights, Suggested Next Actions.",
     "Use the snippets as evidence and mention if coverage is partial.",
     "Avoid status labels like [OK] and avoid ellipsis-heavy phrasing."
+  ].join("\n\n");
+}
+
+export function buildReadOnlyDomPrompt(input: {
+  task: string;
+  pageTitle: string;
+  pageUrl: string;
+  pageContext: PageContextSnapshot;
+}): string {
+  const compactContext = {
+    path: input.pageContext.urlPath,
+    headings: input.pageContext.headings.slice(0, 10).map((value) => summarize(value, 110)),
+    candidates: input.pageContext.candidates.slice(0, 18).map((value) => summarize(value, 90)),
+    bodyTextSnippet: summarize(input.pageContext.bodyTextSnippet, 2600)
+  };
+
+  return [
+    `User request: ${input.task}`,
+    `Current page: ${input.pageTitle} (${input.pageUrl})`,
+    "DOM snapshot JSON (evidence only):",
+    JSON.stringify(compactContext),
+    "Write one direct natural-language response.",
+    "Do not add headings, labels, metadata, or status sections.",
+    "Do not mention tools, clicks, actions, navigation, or raw JSON.",
+    "If details are missing, include one short uncertainty sentence at the end."
   ].join("\n\n");
 }
 

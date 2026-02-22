@@ -1,5 +1,6 @@
 import { parseActionBatch } from "../shared/actions";
 import type {
+  AgentRunMode,
   ExecuteActionsMessage,
   ExecuteActionsResponse,
   PageContextSnapshot,
@@ -10,6 +11,7 @@ import type {
 } from "../shared/messages";
 import { executeActions } from "./executor/runner";
 import { CommandBar } from "./ui/commandBar";
+import type { SelectedImageInput } from "./ui/shell";
 
 declare global {
   interface Window {
@@ -30,6 +32,7 @@ type ShellRegistry = {
   order: string[];
   runTargetId: string | null;
   zIndexCursor: number;
+  defaultAgentMode: AgentRunMode;
 };
 
 function initializeContentScript(): void {
@@ -37,7 +40,8 @@ function initializeContentScript(): void {
     bars: new Map<string, CommandBar>(),
     order: [],
     runTargetId: null,
-    zIndexCursor: BASE_SHELL_Z_INDEX
+    zIndexCursor: BASE_SHELL_Z_INDEX,
+    defaultAgentMode: "agentic"
   };
 
   const removeBar = (barId: string): void => {
@@ -59,10 +63,13 @@ function initializeContentScript(): void {
     registry.order = [...registry.order.filter((id) => id !== barId), barId];
   };
 
-  const getLatestVisibleBar = (): CommandBar | null => {
+  const getLatestVisibleBar = (opts?: { skipPinned?: boolean }): CommandBar | null => {
     for (let index = registry.order.length - 1; index >= 0; index -= 1) {
       const bar = registry.bars.get(registry.order[index]);
       if (bar?.isOpenAndVisible()) {
+        if (opts?.skipPinned && bar.isPinned()) {
+          continue;
+        }
         return bar;
       }
     }
@@ -74,15 +81,19 @@ function initializeContentScript(): void {
     const bar = new CommandBar({
       id: barId,
       zIndex: registry.zIndexCursor + 1,
-      onSubmit: async (prompt: string) => {
+      initialAgentMode: registry.defaultAgentMode,
+      onSubmit: async (payload) => {
         registry.runTargetId = barId;
-        await handleSubmitTask(bar, prompt);
+        await handleSubmitTask(bar, payload.prompt, payload.selectedImage, payload.agentMode);
       },
       onActivate: (id: string) => {
         bringToFront(id);
       },
       onClose: (id: string) => {
         removeBar(id);
+      },
+      onAgentModeChange: (mode) => {
+        registry.defaultAgentMode = mode;
       }
     });
 
@@ -92,10 +103,13 @@ function initializeContentScript(): void {
     bar.open();
 
     if (registry.order.length > MAX_OPEN_SHELLS) {
-      const oldestId = registry.order[0];
-      if (oldestId && oldestId !== barId) {
-        const oldestBar = registry.bars.get(oldestId);
-        oldestBar?.close();
+      for (const candidateId of registry.order) {
+        if (candidateId === barId) continue;
+        const candidateBar = registry.bars.get(candidateId);
+        if (candidateBar && !candidateBar.isPinned()) {
+          candidateBar.close();
+          break;
+        }
       }
     }
 
@@ -120,18 +134,13 @@ function initializeContentScript(): void {
   };
 
   const handleHotkeyToggle = (): void => {
-    const latestBar = getLatestVisibleBar();
+    const latestBar = getLatestVisibleBar({ skipPinned: true });
     if (!latestBar) {
       createBar();
       return;
     }
 
-    if (latestBar.isPristineForHotkeyToggle()) {
-      latestBar.close();
-      return;
-    }
-
-    createBar();
+    latestBar.close();
   };
 
   document.addEventListener("keydown", (event: KeyboardEvent) => {
@@ -139,7 +148,7 @@ function initializeContentScript(): void {
       return;
     }
 
-    const latestBar = getLatestVisibleBar();
+    const latestBar = getLatestVisibleBar({ skipPinned: true });
     if (!latestBar) {
       return;
     }
@@ -206,7 +215,12 @@ function initializeContentScript(): void {
   });
 }
 
-async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise<void> {
+async function handleSubmitTask(
+  commandBar: CommandBar,
+  prompt: string,
+  selectedImage: SelectedImageInput | null,
+  agentMode: AgentRunMode
+): Promise<void> {
   const startedAt = Date.now();
   commandBar.clearOutput();
   commandBar.clearTrace();
@@ -222,6 +236,8 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
       type: "agent/submit-task",
       payload: {
         prompt,
+        agentMode,
+        selectedImage,
         pageUrl: window.location.href,
         pageTitle: document.title,
         pageContext: collectPageContext()
@@ -279,64 +295,44 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): string {
-  const elapsedMs = Date.now() - startedAt;
-  const results = response.payload.results ?? [];
-  const okCount = results.filter((result) => result.ok).length;
-  const failCount = results.length - okCount;
-  const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
-  const warnings = response.payload.warnings ?? [];
-  const partial = response.payload.partial ?? false;
-
-  const lines: string[] = [];
-  if (partial) {
-    lines.push("Status: Partial result");
-  }
-  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} completed${failCount > 0 ? ` (${failCount} failed)` : ""}`);
-  if (warnings.length > 0) {
-    warnings.forEach((warning) => {
-      lines.push(`Warning: ${warning}`);
-    });
-  }
-  lines.push("");
-  lines.push(response.payload.summary ?? "No summary returned.");
-  return lines.join("\n");
+function formatFinalOutput(response: SubmitTaskResponse, _startedAt: number): string {
+  return (response.payload.summary ?? "No summary returned.").trim();
 }
 
 function formatUiResultMessage(message: ShowResultMessage): string {
-  const elapsedMs = message.payload.elapsedMs ?? 0;
-  const results = message.payload.results ?? [];
-  const okCount = results.filter((result) => result.ok).length;
-  const failCount = results.length - okCount;
-  const elapsedSeconds = elapsedMs > 0 ? (elapsedMs / 1000).toFixed(1) : "n/a";
-  const warnings = message.payload.warnings ?? [];
-  const partial = message.payload.partial ?? false;
-
-  const lines: string[] = [];
-  if (partial) {
-    lines.push("Status: Partial result");
-  }
-  lines.push(`Run: ${elapsedSeconds}s | Actions: ${okCount}/${results.length} completed${failCount > 0 ? ` (${failCount} failed)` : ""}`);
-  if (warnings.length > 0) {
-    warnings.forEach((warning) => {
-      lines.push(`Warning: ${warning}`);
-    });
-  }
-  lines.push("");
-  lines.push(message.payload.summary ?? "No summary returned.");
-  return lines.join("\n");
+  return (message.payload.summary ?? "No summary returned.").trim();
 }
 
 function collectPageContext(): PageContextSnapshot {
   const headings = collectUniqueText(["h1", "h2", "h3"], 8);
   const candidates = collectUniqueText(["a", "button", "[role='button']", "input[type='submit']"], 14);
   const urlPath = `${window.location.pathname}${window.location.search}` || "/";
+  const bodyTextSnippet = collectBodyTextSnippet(2200);
 
   return {
     urlPath,
     headings,
-    candidates
+    candidates,
+    bodyTextSnippet
   };
+}
+
+function collectBodyTextSnippet(maxChars: number): string {
+  const preferredRoots = ["main", "article", "[role='main']", "body"];
+
+  for (const selector of preferredRoots) {
+    const root = document.querySelector(selector);
+    if (!(root instanceof HTMLElement) || !isVisibleElement(root)) {
+      continue;
+    }
+
+    const text = normalizeLongText(root.innerText || root.textContent || "");
+    if (text.length >= 140) {
+      return text.slice(0, maxChars);
+    }
+  }
+
+  return normalizeLongText(document.body?.innerText || document.body?.textContent || "").slice(0, maxChars);
 }
 
 function collectUniqueText(selectors: string[], limit: number): string[] {
@@ -382,4 +378,8 @@ function isVisibleElement(element: Element): boolean {
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
+function normalizeLongText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }

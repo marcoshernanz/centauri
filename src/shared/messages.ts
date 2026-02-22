@@ -1,11 +1,13 @@
 import type { ActionExecutionResult, AgentAction, ExecutionLimits } from "./actions";
 
 export type UIState = "idle" | "planning" | "executing" | "summarizing" | "done" | "error";
+export type AgentRunMode = "agentic" | "chat";
 
 export type PageContextSnapshot = {
   urlPath: string;
   headings: string[];
   candidates: string[];
+  bodyTextSnippet?: string;
 };
 
 export type ToggleCommandBarMessage = {
@@ -40,6 +42,11 @@ export type SubmitTaskMessage = {
   type: "agent/submit-task";
   payload: {
     prompt: string;
+    agentMode?: AgentRunMode;
+    selectedImage?: {
+      src: string;
+      alt: string | null;
+    } | null;
     pageUrl: string;
     pageTitle: string;
     pageContext: PageContextSnapshot;
@@ -75,10 +82,27 @@ export type ExecuteActionsResponse = {
   };
 };
 
+export type TtsSynthesizeMessage = {
+  type: "tts/synthesize";
+  payload: {
+    text: string;
+    voiceId: string;
+    modelId: string;
+    apiKey: string;
+  };
+};
+
+export type TtsSynthesizeResponse = {
+  ok: boolean;
+  audioBase64?: string;
+  error?: string;
+};
+
 export type RuntimeMessage =
   | ToggleCommandBarMessage
   | OpenCommandBarMessage
   | SetCommandStateMessage
   | ShowResultMessage
   | SubmitTaskMessage
-  | ExecuteActionsMessage;
+  | ExecuteActionsMessage
+  | TtsSynthesizeMessage;
