@@ -1,6 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import type { ActionExecutionResult } from "../../shared/actions";
-import type { UIState } from "../../shared/messages";
+import type { ChatHistoryTurn, UIState } from "../../shared/messages";
 import {
   ShellApp,
   type CompletedTaskModel,
@@ -13,6 +13,7 @@ import {
 export type CommandBarSubmitRequest = {
   prompt: string;
   agentMode: boolean;
+  chatHistory: ChatHistoryTurn[];
 };
 
 type SubmitHandler = (request: CommandBarSubmitRequest) => Promise<void>;
@@ -56,6 +57,8 @@ const HOST_ID = "nwa-shell-host";
 const MAX_COMPLETED_TASKS = 8;
 const MAX_VISIBLE_IMAGE_CANDIDATES = 18;
 const MAX_IMAGE_CONTEXT_ITEMS = 8;
+const MAX_CHAT_HISTORY_TURNS = 6;
+const MAX_CHAT_HISTORY_CHARS_PER_SIDE = 900;
 
 const STATUS_LABEL: Record<UIState, string> = {
   idle: "Ready",
@@ -293,11 +296,23 @@ export class CommandBar {
   }
 
   private prettifySummaryText(value: string): string {
-    const compact = value.replace(/\s+/g, " ").trim();
-    if (!compact) {
+    const normalized = value
+      .split(/\r?\n/)
+      .map((line) => line.replace(/[ \t]+/g, " ").trimEnd())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (!normalized) {
       return value;
     }
 
+    // In chat mode there is no executor trace; preserve paragraph formatting.
+    if (this.traceResults.length === 0) {
+      return normalized;
+    }
+
+    const compact = normalized.replace(/\s+/g, " ").trim();
     return compact
       .replace(/\s+(\d+\.\s+)/g, "\n$1")
       .replace(/\s+(Source:\s+https?:\/\/)/gi, "\n$1")
@@ -469,7 +484,8 @@ export class CommandBar {
 
     await this.onSubmit({
       prompt: this.buildPromptWithSelectedImageContext(prompt),
-      agentMode: this.agentMode
+      agentMode: this.agentMode,
+      chatHistory: this.buildChatHistorySnapshot()
     });
   }
 
@@ -635,6 +651,16 @@ export class CommandBar {
     });
 
     return candidates.slice(0, MAX_VISIBLE_IMAGE_CANDIDATES);
+  }
+
+  private buildChatHistorySnapshot(): ChatHistoryTurn[] {
+    return this.completedTasks
+      .filter((task) => Boolean(task.prompt.trim()) && Boolean(task.summary?.trim()))
+      .slice(-MAX_CHAT_HISTORY_TURNS)
+      .map((task) => ({
+        user: clipText(task.prompt.trim(), MAX_CHAT_HISTORY_CHARS_PER_SIDE),
+        assistant: clipText((task.summary ?? "").trim(), MAX_CHAT_HISTORY_CHARS_PER_SIDE)
+      }));
   }
 
   private buildPromptWithSelectedImageContext(prompt: string): string {

@@ -3,7 +3,9 @@ import { mkdir, copyFile, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 const envValues = await loadDotEnv();
-const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? envValues.ANTHROPIC_API_KEY ?? "";
+const openaiApiKey = process.env.OPENAI_API_KEY ?? envValues.OPENAI_API_KEY ?? "";
+const openaiModel = process.env.OPENAI_MODEL ?? envValues.OPENAI_MODEL ?? "";
+const openaiMaxTokens = process.env.OPENAI_MAX_TOKENS ?? envValues.OPENAI_MAX_TOKENS ?? "";
 const elevenlabsApiKey = process.env.ELEVENLABS_API_KEY ?? envValues.ELEVENLABS_API_KEY ?? "";
 const elevenlabsVoiceId = process.env.ELEVENLABS_VOICE_ID ?? envValues.ELEVENLABS_VOICE_ID ?? "";
 const elevenlabsSpeechProfile =
@@ -32,7 +34,9 @@ for (const item of entries) {
     sourcemap: false,
     legalComments: "none",
     define: {
-      __NWA_ANTHROPIC_API_KEY__: JSON.stringify(anthropicApiKey),
+      __NWA_OPENAI_API_KEY__: JSON.stringify(openaiApiKey),
+      __NWA_OPENAI_MODEL__: JSON.stringify(openaiModel),
+      __NWA_OPENAI_MAX_TOKENS__: JSON.stringify(openaiMaxTokens),
       __NWA_ELEVENLABS_API_KEY__: JSON.stringify(elevenlabsApiKey),
       __NWA_ELEVENLABS_VOICE_ID__: JSON.stringify(elevenlabsVoiceId),
       __NWA_ELEVENLABS_SPEECH_PROFILE__: JSON.stringify(elevenlabsSpeechProfile)

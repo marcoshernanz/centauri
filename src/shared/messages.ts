@@ -2,6 +2,10 @@ import type { ActionExecutionResult, AgentAction, ExecutionLimits } from "./acti
 
 export type UIState = "idle" | "planning" | "executing" | "summarizing" | "done" | "error";
 export type InteractionMode = "agent" | "chat";
+export type ChatHistoryTurn = {
+  user: string;
+  assistant: string;
+};
 
 export type PageContextSnapshot = {
   urlPath: string;
@@ -43,6 +47,7 @@ export type SubmitTaskMessage = {
   payload: {
     prompt: string;
     agentMode?: boolean;
+    chatHistory?: ChatHistoryTurn[];
     pageUrl: string;
     pageTitle: string;
     pageContext: PageContextSnapshot;

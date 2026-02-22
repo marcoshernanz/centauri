@@ -81,7 +81,7 @@ function initializeContentScript(): void {
 }
 
 async function handleSubmitTask(commandBar: CommandBar, request: CommandBarSubmitRequest): Promise<void> {
-  const { prompt, agentMode } = request;
+  const { prompt, agentMode, chatHistory } = request;
   const startedAt = Date.now();
   commandBar.clearOutput();
   commandBar.clearTrace();
@@ -100,6 +100,7 @@ async function handleSubmitTask(commandBar: CommandBar, request: CommandBarSubmi
       payload: {
         prompt,
         agentMode,
+        chatHistory,
         pageUrl: window.location.href,
         pageTitle: document.title,
         pageContext: collectPageContext()

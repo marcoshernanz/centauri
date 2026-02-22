@@ -6,6 +6,7 @@ import {
   type ListedItem
 } from "../shared/actions";
 import type {
+  ChatHistoryTurn,
   ExecuteActionsMessage,
   ExecuteActionsResponse,
   InteractionMode,
@@ -176,6 +177,7 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   if (interactionMode === "chat") {
     response = await runChatFlow({
       prompt: trimmedPrompt,
+      chatHistory: message.payload.chatHistory ?? [],
       pageTitle: message.payload.pageTitle,
       pageUrl: message.payload.pageUrl,
       pageContext: message.payload.pageContext,
@@ -217,6 +219,7 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
 
 async function runChatFlow(input: {
   prompt: string;
+  chatHistory: ChatHistoryTurn[];
   pageTitle: string;
   pageUrl: string;
   pageContext: SubmitTaskMessage["payload"]["pageContext"];
@@ -224,24 +227,22 @@ async function runChatFlow(input: {
   agentConfig: AgentConfig;
 }): Promise<SubmitTaskResponse> {
   if (!input.claudeConfig) {
-    return toError("Anthropic API key not configured", [], "chat");
+    return toError("OpenAI API key not configured", [], "chat");
   }
 
   const systemPrompt = [
     "You are a helpful browser sidebar chat assistant.",
-    "Respond directly to the user's request in normal chat mode.",
-    "You cannot click, navigate, or inspect the live DOM in this mode.",
-    "Use only the provided page metadata/context and the user's message.",
-    "If the user needs browser automation, tell them to enable agent mode."
+    "This is normal chat mode (agent mode is OFF).",
+    "Reply naturally, conversationally, and directly.",
+    "Match the user's language automatically.",
+    "Continue the conversation using the provided previous turns.",
+    "Do not force sections, bullet lists, or formal summaries unless the user asks for them.",
+    "Use the page title/URL/context only when it is relevant to the user's message.",
+    "Do not read back raw metadata or JSON unless the user asks for it.",
+    "If the user asks you to click, navigate, or perform browser actions, briefly explain that agent mode is off and they can enable it."
   ].join("\n");
 
-  const userPrompt = [
-    `User request: ${input.prompt}`,
-    `Current page title: ${input.pageTitle}`,
-    `Current page URL: ${input.pageUrl}`,
-    "Page context snapshot (headings and candidate controls/links):",
-    JSON.stringify(input.pageContext)
-  ].join("\n\n");
+  const userPrompt = buildChatModeUserPrompt(input);
 
   try {
     const summary = await callClaude(
@@ -255,6 +256,63 @@ async function runChatFlow(input: {
   } catch (error: unknown) {
     return toError(error instanceof Error ? error.message : "Chat request failed", [], "chat");
   }
+}
+
+function buildChatModeUserPrompt(input: {
+  prompt: string;
+  chatHistory: ChatHistoryTurn[];
+  pageTitle: string;
+  pageUrl: string;
+  pageContext: SubmitTaskMessage["payload"]["pageContext"];
+}): string {
+  const historyBlock = formatChatHistoryForPrompt(input.chatHistory);
+  const pageContextBlock = formatPageContextForChatPrompt(input.pageContext);
+
+  return [
+    "Conversation so far (oldest to newest):",
+    historyBlock || "(no previous turns)",
+    "Current page context (optional support context):",
+    `Title: ${clipPromptText(input.pageTitle, 180)}`,
+    `URL: ${clipPromptText(input.pageUrl, 300)}`,
+    pageContextBlock,
+    "Current user message:",
+    input.prompt
+  ].join("\n\n");
+}
+
+function formatChatHistoryForPrompt(turns: ChatHistoryTurn[]): string {
+  if (turns.length === 0) {
+    return "";
+  }
+
+  return turns
+    .slice(-6)
+    .map((turn, index) => {
+      const user = clipPromptText(turn.user, 900);
+      const assistant = clipPromptText(turn.assistant, 1100);
+      return `Turn ${index + 1}\nUser: ${user}\nAssistant: ${assistant}`;
+    })
+    .join("\n\n");
+}
+
+function formatPageContextForChatPrompt(pageContext: SubmitTaskMessage["payload"]["pageContext"]): string {
+  const headings = (pageContext.headings ?? []).map((item) => `- ${clipPromptText(item, 140)}`);
+  const candidates = (pageContext.candidates ?? []).map((item) => `- ${clipPromptText(item, 140)}`);
+
+  const sections: string[] = [];
+  sections.push(`Path: ${clipPromptText(pageContext.urlPath ?? "/", 240)}`);
+  sections.push(`Headings:\n${headings.length > 0 ? headings.join("\n") : "- (none captured)"}`);
+  sections.push(`Visible controls/links:\n${candidates.length > 0 ? candidates.join("\n") : "- (none captured)"}`);
+  return sections.join("\n");
+}
+
+function clipPromptText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 async function runHackerNewsFlow(
