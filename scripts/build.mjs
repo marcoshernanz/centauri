@@ -43,7 +43,11 @@ for (const item of entries) {
 const staticFiles = [
   ["manifest.json", "dist/manifest.json"],
   ["src/content/ui/styles.css", "dist/content/ui/styles.css"],
-  ["agent.config.json", "dist/agent.config.json"]
+  ["agent.config.json", "dist/agent.config.json"],
+  ["assets/icons/icon-16.png", "dist/assets/icons/icon-16.png"],
+  ["assets/icons/icon-32.png", "dist/assets/icons/icon-32.png"],
+  ["assets/icons/icon-48.png", "dist/assets/icons/icon-48.png"],
+  ["assets/icons/icon-128.png", "dist/assets/icons/icon-128.png"]
 ];
 
 for (const [source, destination] of staticFiles) {
