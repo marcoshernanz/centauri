@@ -75,6 +75,10 @@
 | T22 | P0 | DONE | End-to-end test script for Gmail demo | 45m | T14,T12 | Reproducible green run with expected output quality |
 | T23 | P0 | DONE | Demo mode polish (copy, loading states, readable summary formatting) | 45m | T21,T22 | Demo looks intentional and understandable |
 | T24 | P0 | DONE | Final rehearsal checklist + backup prompts | 30m | T23 | One-click runbook ready for live presentation |
+| T25 | P0 | DONE | Generic cross-site traversal fallback (list/open/extract/return loop) | 1h | T11,T16 | Works on non-adapter domains for top/recent multi-item prompts |
+| T26 | P0 | DONE | Dynamic planner context refresh from live executor metadata | 45m | T16,T20 | Planner sees current URL/title/candidates after navigation |
+| T27 | P1 | DONE | Generic relevance ranking + partial coverage warnings | 45m | T25,T18 | Candidate selection avoids nav noise and reports shortfalls clearly |
+| T28 | P1 | DONE | UI contrast hardening against host-page CSS overrides | 15m | T23 | Output/trace text remains readable on sites like Wikipedia |
 
 ## 5) Architecture Implementation Details
 
@@ -188,7 +192,7 @@ Each action payload includes:
 
 ## 10) Progress Snapshot
 - Last updated: 2026-02-22
-- Current phase: All planned MVP and polish tasks complete
+- Current phase: MVP + cross-site generalization complete
 - Completed:
   - `PROJECT.md` created
   - `PLAN.md` created
@@ -216,10 +220,14 @@ Each action payload includes:
   - T22 Gmail acceptance script
   - T23 Demo mode polish
   - T24 Final rehearsal checklist + backup prompts
+  - T25 Generic cross-site traversal fallback
+  - T26 Dynamic planner context refresh
+  - T27 Generic candidate ranking + coverage warnings
+  - T28 UI contrast hardening for cross-site pages
 - In progress:
   - None
 - Next up:
-  - Optional future enhancements only
+  - Manual validation on 2-3 non-adapter websites and final tuning
 
 ## 11) Work Log
 - 2026-02-21:
@@ -314,6 +322,18 @@ Each action payload includes:
     - T17: added “Show Steps” trace panel in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts` and `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`, with step rendering from action execution results.
     - T18: added explicit partial-result warnings and metadata across `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`, `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts`, and `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
   - Re-verified T16/T17/T18 with `npm run typecheck` and `npm run build`.
+  - Implemented advanced cross-site support while preserving HN/Gmail adapters:
+    - Added generic traversal fallback loop (list candidates -> open page -> extract -> return) with ranked candidate selection in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - Added planner utility gating to accept only useful generic planner outcomes and fall back automatically when coverage is too low.
+    - Added generic traversal summary prompt contract in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`.
+    - Added executor page metadata capture (URL/title/headings/candidates) in `/Users/marcoshernanz/dev/hackeurope2/src/content/executor/runner.ts` and `/Users/marcoshernanz/dev/hackeurope2/src/shared/actions.ts`.
+    - Upgraded compact planner context to use live page metadata and discovered items in `/Users/marcoshernanz/dev/hackeurope2/src/agent/context.ts`.
+    - Tightened generic target-count heuristic so numeric prompts without list intent (e.g. “3 key points”) do not trigger cross-page traversal.
+  - Re-verified T25/T26/T27 with `npm run typecheck` and `npm run build`.
+  - Fixed cross-site readability issue where host-page `pre` styles (e.g., Wikipedia) could make summary text invisible:
+    - forced explicit text colors for output/trace panels in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/styles.css`.
+    - added selection contrast styling for readability in dark output panels.
+  - Re-verified T28 with `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -326,6 +346,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Run final manual checks with `npm run test:demo:hn` and `npm run test:demo:gmail`.
-2. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.
-3. If needed, only tune values in `/Users/marcoshernanz/dev/hackeurope2/agent.config.json` (no code changes).
+1. Re-run demo-critical checks on Hacker News and Gmail with real prompts.
+2. Validate generic flow on at least three non-adapter sites (news/blog/docs) using “summarize top/recent N” prompts.
+3. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.

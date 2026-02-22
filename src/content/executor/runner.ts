@@ -56,7 +56,8 @@ async function runActionWithGuardrails(action: AgentAction, limits: ExecutionLim
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const data = await runWithTimeout(executeAction(action, limits), limits.maxActionTimeoutMs);
+      const rawData = await runWithTimeout(executeAction(action, limits), limits.maxActionTimeoutMs);
+      const data = attachPageMetadata(rawData);
       return {
         actionId: action.id,
         type: action.type,
@@ -81,6 +82,66 @@ async function runActionWithGuardrails(action: AgentAction, limits: ExecutionLim
     durationMs: Date.now() - startedAt,
     error: lastError
   };
+}
+
+function attachPageMetadata(data: ActionExecutionResult["data"]): ActionExecutionResult["data"] {
+  const snapshot = capturePageSignals();
+  return {
+    ...(data ?? {}),
+    url: data?.url ?? window.location.href,
+    pageTitle: snapshot.pageTitle,
+    headings: snapshot.headings,
+    candidates: snapshot.candidates
+  };
+}
+
+function capturePageSignals(): { pageTitle: string; headings: string[]; candidates: string[] } {
+  return {
+    pageTitle: normalizeText(document.title).slice(0, 140),
+    headings: collectVisibleUniqueText(["h1", "h2", "h3"], 5),
+    candidates: collectVisibleUniqueText(["main a[href]", "[role='main'] a[href]", "a[href]", "button"], 8)
+  };
+}
+
+function collectVisibleUniqueText(selectors: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+
+  for (const selector of selectors) {
+    const elements = Array.from(document.querySelectorAll(selector));
+    for (const element of elements) {
+      if (values.length >= limit) {
+        return values;
+      }
+
+      if (!isVisibleElement(element)) {
+        continue;
+      }
+
+      const text = normalizeText(getElementText(element)).slice(0, 120);
+      if (!text || seen.has(text)) {
+        continue;
+      }
+
+      seen.add(text);
+      values.push(text);
+    }
+  }
+
+  return values;
+}
+
+function isVisibleElement(element: Element): boolean {
+  if (!(element instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (element.offsetParent === null && element.getClientRects().length === 0) {
+    return false;
+  }
+
+  const style = getComputedStyle(element);
+  return style.visibility !== "hidden" && style.display !== "none";
 }
 
 async function executeAction(

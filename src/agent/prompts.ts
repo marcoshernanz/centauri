@@ -10,6 +10,9 @@ export function buildPlannerSystemPrompt(maxActions = 4): string {
     "Rules:",
     "- Use only allowed action types.",
     `- Use 1 to ${maxActions} actions per response.`,
+    "- For multi-item tasks (top/recent/last N), prefer loops: LIST_ITEMS -> OPEN_IN_SAME_TAB/CLICK -> WAIT_FOR -> EXTRACT_TEXT -> BACK.",
+    "- Prefer selectors inside main content first, then broader fallbacks.",
+    "- Avoid repeating the same failed selector/action pattern.",
     "- Include DONE when enough information is gathered.",
     "- Never invent extracted text or success.",
     "- No markdown, no explanation, JSON only."
@@ -38,7 +41,7 @@ export function buildPlannerUserPrompt(input: {
     `Task: ${input.task}`,
     "Compact context JSON (URL/title/candidates/snippets):",
     JSON.stringify(compactContext),
-    "Return next JSON action batch."
+    "Return next JSON action batch only. Stop with DONE when task objective is met or no better action is available."
   ].join("\n\n");
 }
 
@@ -115,6 +118,30 @@ export function buildGenericSummaryPrompt(input: {
     "Execution context:",
     JSON.stringify(compactResults),
     "Provide a concise final answer with: Summary, Key Points, Next Actions."
+  ].join("\n\n");
+}
+
+export function buildGenericTraversalSummaryPrompt(input: {
+  task: string;
+  originTitle: string;
+  originUrl: string;
+  visited: Array<{ title: string; url: string; preview: string; ok: boolean }>;
+}): string {
+  const compactVisited = input.visited.slice(0, 8).map((item, index) => ({
+    index: index + 1,
+    title: summarize(item.title, 120),
+    url: item.url,
+    ok: item.ok,
+    preview: summarize(item.preview, 320)
+  }));
+
+  return [
+    `Task: ${input.task}`,
+    `Origin page: ${input.originTitle} (${input.originUrl})`,
+    "Visited page snippets:",
+    JSON.stringify(compactVisited),
+    "Write a concise answer with sections: Overall Summary, Item Highlights, Suggested Next Actions.",
+    "Use the snippets as evidence and mention if coverage is partial."
   ].join("\n\n");
 }
 

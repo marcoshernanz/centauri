@@ -17,6 +17,7 @@ import { callClaude, loadAgentConfig, loadClaudeConfig, type AgentConfig, type C
 import {
   buildGmailSummaryPrompt,
   buildGenericSummaryPrompt,
+  buildGenericTraversalSummaryPrompt,
   buildHackerNewsSummaryPrompt,
   buildPlannerRepairSystemPrompt,
   buildPlannerRepairUserPrompt,
@@ -31,6 +32,32 @@ const DEFAULT_TARGET_COUNT = 5;
 const MAX_TARGET_COUNT = 5;
 const HN_HOME_URL = "https://news.ycombinator.com/";
 const GMAIL_INBOX_URL = "https://mail.google.com/mail/u/0/#inbox";
+const GENERIC_LIST_SELECTORS = [
+  "main article a[href]",
+  "main h2 a[href]",
+  "main h3 a[href]",
+  "[role='main'] article a[href]",
+  "[role='main'] a[href]",
+  "article a[href]",
+  "main a[href]",
+  "a[href]"
+] as const;
+const GENERIC_WAIT_SELECTORS = ["main", "[role='main']", "article", "body"] as const;
+const GENERIC_EXTRACT_SELECTORS = ["article", "main", "[role='main']", "section", "body"] as const;
+const GENERIC_NAV_BLOCKLIST = [
+  "login",
+  "sign-in",
+  "signin",
+  "signup",
+  "register",
+  "account",
+  "settings",
+  "privacy",
+  "terms",
+  "mailto:",
+  "tel:",
+  "javascript:"
+] as const;
 const TRANSIENT_EXECUTOR_ERROR_PATTERNS = [
   "No response from executor",
   "Failed to communicate with content script",
@@ -137,6 +164,7 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   }
 
   const targetCount = parseRequestedCount(trimmedPrompt);
+  const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
   const agentConfig = await loadAgentConfig();
   const claudeConfig = await loadClaudeConfig();
 
@@ -157,6 +185,7 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   response = await runGenericFlow(
     tabId,
     trimmedPrompt,
+    genericTargetCount,
     message.payload.pageTitle,
     message.payload.pageUrl,
     message.payload.pageContext,
@@ -396,6 +425,7 @@ async function runGmailFlow(
 async function runGenericFlow(
   tabId: number,
   prompt: string,
+  targetCount: number,
   pageTitle: string,
   pageUrl: string,
   pageContext: SubmitTaskMessage["payload"]["pageContext"],
@@ -403,9 +433,25 @@ async function runGenericFlow(
   agentConfig: AgentConfig
 ): Promise<SubmitTaskResponse> {
   if (claudeConfig) {
-    const planned = await runClaudePlannerLoop(tabId, prompt, pageTitle, pageUrl, pageContext, claudeConfig, agentConfig);
-    if (planned) {
+    const planned = await runClaudePlannerLoop(
+      tabId,
+      prompt,
+      targetCount,
+      pageTitle,
+      pageUrl,
+      pageContext,
+      claudeConfig,
+      agentConfig
+    );
+    if (planned && hasUsefulGenericPlannerOutcome(planned.payload.results ?? [], targetCount)) {
       return planned;
+    }
+  }
+
+  if (shouldRunGenericTraversal(prompt, targetCount)) {
+    const traversed = await runGenericTraversalFlow(tabId, prompt, targetCount, pageTitle, pageUrl, claudeConfig, agentConfig);
+    if (traversed) {
+      return traversed;
     }
   }
 
@@ -413,14 +459,14 @@ async function runGenericFlow(
     {
       id: "wait-generic",
       type: "WAIT_FOR",
-      target: { selectors: ["body"] },
-      params: { timeoutMs: 1200 }
+      target: { selectors: [...GENERIC_WAIT_SELECTORS] },
+      params: { timeoutMs: 1500 }
     },
     {
       id: "extract-generic",
       type: "EXTRACT_TEXT",
-      target: { selectors: ["article", "main", "[role='main']", "body"] },
-      params: { maxChars: 2000 }
+      target: { selectors: [...GENERIC_EXTRACT_SELECTORS] },
+      params: { maxChars: 2400 }
     }
   ], agentConfig);
 
@@ -449,9 +495,154 @@ async function runGenericFlow(
   return toSuccess(claudeSummary ?? deterministicSummary, outcome.payload.results, warnings);
 }
 
+async function runGenericTraversalFlow(
+  tabId: number,
+  prompt: string,
+  targetCount: number,
+  originTitle: string,
+  originUrl: string,
+  claudeConfig: ClaudeConfig | null,
+  agentConfig: AgentConfig
+): Promise<SubmitTaskResponse | null> {
+  const allResults: ActionExecutionResult[] = [];
+  const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+  if (normalizeUrl(currentTab?.url) !== normalizeUrl(originUrl)) {
+    const returnedToOrigin = await navigateTab(tabId, originUrl, agentConfig);
+    if (!returnedToOrigin) {
+      return null;
+    }
+  }
+
+  const listOutcome = await executeActionBatch(tabId, [
+    {
+      id: "wait-generic-list",
+      type: "WAIT_FOR",
+      target: { selectors: [...GENERIC_WAIT_SELECTORS] },
+      params: { timeoutMs: 1800 }
+    },
+    {
+      id: "list-generic-items",
+      type: "LIST_ITEMS",
+      target: { selectors: [...GENERIC_LIST_SELECTORS] },
+      params: { limit: Math.min(20, Math.max(6, targetCount * 4)) }
+    }
+  ], agentConfig);
+  allResults.push(...listOutcome.payload.results);
+
+  if (!listOutcome.ok) {
+    return null;
+  }
+
+  const selectedItems = rankGenericCandidates(getListedItems(listOutcome.payload.results), prompt, originUrl).slice(0, targetCount);
+  if (selectedItems.length === 0) {
+    return null;
+  }
+
+  const visited: Array<{ title: string; url: string; preview: string; ok: boolean }> = [];
+
+  for (const item of selectedItems) {
+    if (!item.href) {
+      continue;
+    }
+
+    const opened = await navigateTab(tabId, item.href, agentConfig);
+    if (!opened) {
+      visited.push({
+        title: item.text,
+        url: item.href,
+        preview: "Navigation failed",
+        ok: false
+      });
+      continue;
+    }
+
+    const extractOutcome = await executeActionBatch(tabId, [
+      {
+        id: `wait-generic-open-${createRunId()}`,
+        type: "WAIT_FOR",
+        target: { selectors: [...GENERIC_WAIT_SELECTORS] },
+        params: { timeoutMs: 2200 }
+      },
+      {
+        id: `extract-generic-open-${createRunId()}`,
+        type: "EXTRACT_TEXT",
+        target: { selectors: [...GENERIC_EXTRACT_SELECTORS] },
+        params: { maxChars: 3500 }
+      }
+    ], agentConfig);
+    allResults.push(...extractOutcome.payload.results);
+
+    const extractedText = getExtractedText(extractOutcome.payload.results);
+    visited.push({
+      title: item.text,
+      url: item.href,
+      preview: summarizeSnippet(extractedText, 230),
+      ok: extractOutcome.ok && extractedText.length > 0
+    });
+
+    const returned = await navigateTab(tabId, originUrl, agentConfig);
+    if (returned) {
+      const returnOutcome = await executeActionBatch(tabId, [
+        {
+          id: `wait-generic-return-${createRunId()}`,
+          type: "WAIT_FOR",
+          target: { selectors: [...GENERIC_WAIT_SELECTORS] },
+          params: { timeoutMs: 1400 }
+        }
+      ], agentConfig);
+      allResults.push(...returnOutcome.payload.results);
+      continue;
+    }
+
+    const backOutcome = await executeActionBatch(tabId, [
+      {
+        id: `back-generic-return-${createRunId()}`,
+        type: "BACK",
+        params: { waitMs: 320 }
+      },
+      {
+        id: `wait-generic-return-back-${createRunId()}`,
+        type: "WAIT_FOR",
+        target: { selectors: [...GENERIC_WAIT_SELECTORS] },
+        params: { timeoutMs: 1400 }
+      }
+    ], agentConfig);
+    allResults.push(...backOutcome.payload.results);
+  }
+
+  if (visited.length === 0) {
+    return null;
+  }
+
+  const deterministicSummary = buildGenericTraversalSummary(prompt, visited, allResults, targetCount);
+  const claudeSummary = claudeConfig
+    ? await maybeClaudeSummarize(
+        claudeConfig,
+        buildGenericTraversalSummaryPrompt({
+          task: prompt,
+          originTitle,
+          originUrl,
+          visited
+        }),
+        agentConfig.claude.summaryMaxTokens
+      )
+    : null;
+
+  const warnings: string[] = [];
+  if (visited.filter((item) => item.ok).length < targetCount) {
+    warnings.push(`Only ${visited.filter((item) => item.ok).length} of ${targetCount} target pages were processed.`);
+  }
+  if (allResults.some((result) => !result.ok)) {
+    warnings.push("Some navigation/extraction actions failed during cross-site traversal.");
+  }
+
+  return toSuccess(claudeSummary ?? deterministicSummary, allResults, warnings);
+}
+
 async function runClaudePlannerLoop(
   tabId: number,
   prompt: string,
+  targetCount: number,
   pageTitle: string,
   pageUrl: string,
   pageContext: SubmitTaskMessage["payload"]["pageContext"],
@@ -462,6 +653,7 @@ async function runClaudePlannerLoop(
   let latestExtract = "";
   let previousActionSignature = "";
   let consecutiveBatchFailures = 0;
+  let stagnantIterations = 0;
 
   for (let iteration = 1; iteration <= agentConfig.claude.plannerMaxIterations; iteration += 1) {
     const plannedActions = await planActionsWithClaude({
@@ -496,18 +688,34 @@ async function runClaudePlannerLoop(
       latestExtract = extractedText;
     }
 
+    const yieldedEvidence =
+      Boolean(extractedText) ||
+      outcome.payload.results.some((result) => (result.data?.items?.length ?? 0) > 0);
+    stagnantIterations = yieldedEvidence ? 0 : stagnantIterations + 1;
+
     if (!outcome.ok) {
       consecutiveBatchFailures += 1;
     } else {
       consecutiveBatchFailures = 0;
     }
 
-    if (consecutiveBatchFailures >= 2 || plannedActions.some((action) => action.type === "DONE")) {
+    const successfulExtracts = countSuccessfulExtracts(allResults);
+    const reachedTarget = targetCount > 1 && successfulExtracts >= targetCount;
+    if (
+      consecutiveBatchFailures >= 2 ||
+      stagnantIterations >= 2 ||
+      reachedTarget ||
+      plannedActions.some((action) => action.type === "DONE")
+    ) {
       break;
     }
   }
 
   if (allResults.length === 0) {
+    return null;
+  }
+
+  if (!hasUsefulGenericPlannerOutcome(allResults, targetCount)) {
     return null;
   }
 
@@ -1070,6 +1278,174 @@ function buildGenericSummary(
   ].join("\n");
 }
 
+function buildGenericTraversalSummary(
+  prompt: string,
+  visited: Array<{ title: string; url: string; preview: string; ok: boolean }>,
+  results: ActionExecutionResult[],
+  requestedCount: number
+): string {
+  const lines: string[] = [];
+  lines.push(`Task: ${prompt}`);
+  lines.push(`Processed ${visited.filter((item) => item.ok).length}/${requestedCount} target page(s).`);
+  lines.push("");
+  lines.push("Item Highlights");
+
+  visited.forEach((item, index) => {
+    const status = item.ok ? "OK" : "PARTIAL";
+    lines.push(`${index + 1}. [${status}] ${item.title}`);
+    lines.push(`   ${item.url}`);
+    lines.push(`   ${item.preview}`);
+  });
+
+  lines.push("");
+  lines.push(`Execution: ${countOk(results)}/${results.length} actions OK`);
+  if (results.some((result) => !result.ok)) {
+    lines.push("Warning: partial execution; some steps failed.");
+  }
+
+  return lines.join("\n");
+}
+
+function hasUsefulGenericPlannerOutcome(results: ActionExecutionResult[], targetCount: number): boolean {
+  const successfulExtracts = countSuccessfulExtracts(results);
+  if (successfulExtracts === 0) {
+    return false;
+  }
+
+  if (targetCount <= 1) {
+    return true;
+  }
+
+  const minimumExtracts = targetCount >= 3 ? 2 : 1;
+  return successfulExtracts >= minimumExtracts;
+}
+
+function countSuccessfulExtracts(results: ActionExecutionResult[]): number {
+  return results.filter((result) => result.type === "EXTRACT_TEXT" && result.ok && Boolean(result.data?.text)).length;
+}
+
+function rankGenericCandidates(items: ListedItem[], prompt: string, originUrl: string): ListedItem[] {
+  const promptKeywords = extractPromptKeywords(prompt);
+  const seen = new Set<string>();
+
+  const scored = items
+    .filter((item) => Boolean(item.href))
+    .filter((item) => isLikelyNavigableUrl(item.href!, originUrl))
+    .filter((item) => item.text.trim().length >= 8)
+    .map((item) => {
+      const href = item.href!;
+      const text = item.text.trim();
+      const dedupeKey = `${href}::${text.toLowerCase()}`;
+      if (seen.has(dedupeKey)) {
+        return null;
+      }
+      seen.add(dedupeKey);
+
+      return {
+        ...item,
+        score: scoreGenericCandidate(text, href, originUrl, promptKeywords)
+      };
+    })
+    .filter((item): item is ListedItem & { score: number } => Boolean(item))
+    .sort((left, right) => right.score - left.score);
+
+  return scored.map(({ score: _score, ...item }) => item);
+}
+
+function scoreGenericCandidate(text: string, href: string, originUrl: string, promptKeywords: string[]): number {
+  const lowerText = text.toLowerCase();
+  const lowerHref = href.toLowerCase();
+  let score = 0;
+
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  score += Math.min(wordCount, 12);
+
+  for (const keyword of promptKeywords) {
+    if (lowerText.includes(keyword)) {
+      score += 4;
+    }
+    if (lowerHref.includes(keyword)) {
+      score += 2;
+    }
+  }
+
+  if (GENERIC_NAV_BLOCKLIST.some((pattern) => lowerText.includes(pattern) || lowerHref.includes(pattern))) {
+    score -= 12;
+  }
+
+  try {
+    const target = new URL(href);
+    const origin = new URL(originUrl);
+    if (target.hostname === origin.hostname) {
+      score += 3;
+    } else {
+      score -= 1;
+    }
+  } catch {
+    // Keep default score when URL parsing fails.
+  }
+
+  return score;
+}
+
+function isLikelyNavigableUrl(href: string, originUrl: string): boolean {
+  const normalized = href.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (GENERIC_NAV_BLOCKLIST.some((pattern) => normalized.includes(pattern))) {
+    return false;
+  }
+
+  if (normalized.startsWith("#")) {
+    return false;
+  }
+
+  try {
+    const target = new URL(href);
+    const origin = new URL(originUrl);
+    if (!["http:", "https:"].includes(target.protocol)) {
+      return false;
+    }
+
+    if (target.href === origin.href) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractPromptKeywords(prompt: string): string[] {
+  const stopWords = new Set([
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "and",
+    "on",
+    "for",
+    "with",
+    "please",
+    "summarize",
+    "summary",
+    "top",
+    "recent",
+    "latest",
+    "last",
+    "show",
+    "me",
+    "my"
+  ]);
+
+  const words = prompt.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  return Array.from(new Set(words.filter((word) => word.length >= 3 && !stopWords.has(word)))).slice(0, 8);
+}
+
 function countOk(results: ActionExecutionResult[]): number {
   return results.filter((result) => result.ok).length;
 }
@@ -1088,17 +1464,68 @@ function summarizeSnippet(value: string, maxChars: number): string {
 }
 
 function parseRequestedCount(prompt: string): number {
-  const match = prompt.match(/(\d+)/);
+  const match = parseExplicitCount(prompt);
   if (!match) {
     return DEFAULT_TARGET_COUNT;
   }
 
-  const numeric = Number.parseInt(match[1], 10);
-  if (!Number.isFinite(numeric)) {
+  return Math.max(1, Math.min(MAX_TARGET_COUNT, match));
+}
+
+function inferGenericTargetCount(prompt: string): number {
+  const lower = prompt.toLowerCase();
+  const listTaskHints = [
+    "top ",
+    "latest ",
+    "recent ",
+    "last ",
+    "first ",
+    "articles",
+    "article",
+    "posts",
+    "post",
+    "emails",
+    "email",
+    "links",
+    "link",
+    "threads",
+    "thread",
+    "stories",
+    "story",
+    "news"
+  ];
+  const isListTask = listTaskHints.some((hint) => lower.includes(hint));
+
+  const explicitCount = parseExplicitCount(prompt);
+  if (explicitCount && isListTask) {
+    return Math.max(1, Math.min(MAX_TARGET_COUNT, explicitCount));
+  }
+
+  if (isListTask) {
     return DEFAULT_TARGET_COUNT;
   }
 
-  return Math.max(1, Math.min(MAX_TARGET_COUNT, numeric));
+  return 1;
+}
+
+function shouldRunGenericTraversal(prompt: string, targetCount: number): boolean {
+  if (targetCount > 1) {
+    return true;
+  }
+
+  const lower = prompt.toLowerCase();
+  const traversalHints = ["summarize top", "summarize recent", "summarize latest", "summarize first", "summarize last"];
+  return traversalHints.some((hint) => lower.includes(hint));
+}
+
+function parseExplicitCount(prompt: string): number | null {
+  const match = prompt.match(/(\d+)/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isHackerNewsTask(prompt: string, pageUrl: string): boolean {

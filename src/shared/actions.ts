@@ -103,6 +103,9 @@ export type ActionExecutionResult = {
     items?: ListedItem[];
     selectorUsed?: string;
     url?: string;
+    pageTitle?: string;
+    headings?: string[];
+    candidates?: string[];
   };
   error?: string;
 };
