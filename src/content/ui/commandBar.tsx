@@ -1,9 +1,21 @@
 import { createRoot, type Root } from "react-dom/client";
 import type { ActionExecutionResult } from "../../shared/actions";
 import type { UIState } from "../../shared/messages";
-import { ShellApp, type CompletedTaskModel, type MenuOption, type ShellCallbacks, type ShellViewModel } from "./shell";
+import {
+  ShellApp,
+  type CompletedTaskModel,
+  type MenuOption,
+  type ShellCallbacks,
+  type ShellImageCandidateModel,
+  type ShellViewModel
+} from "./shell";
 
-type SubmitHandler = (prompt: string) => Promise<void>;
+export type CommandBarSubmitRequest = {
+  prompt: string;
+  agentMode: boolean;
+};
+
+type SubmitHandler = (request: CommandBarSubmitRequest) => Promise<void>;
 declare const __NWA_ELEVENLABS_API_KEY__: string;
 declare const __NWA_ELEVENLABS_VOICE_ID__: string;
 declare const __NWA_ELEVENLABS_SPEECH_PROFILE__: string;
@@ -42,6 +54,8 @@ type SpeechRecognitionWindow = Window & {
 
 const HOST_ID = "nwa-shell-host";
 const MAX_COMPLETED_TASKS = 8;
+const MAX_VISIBLE_IMAGE_CANDIDATES = 18;
+const MAX_IMAGE_CONTEXT_ITEMS = 8;
 
 const STATUS_LABEL: Record<UIState, string> = {
   idle: "Ready",
@@ -58,6 +72,29 @@ const MENU_OPTIONS: MenuOption[] = [
   { label: "Search", value: "search" },
   { label: "Plan", value: "plan" }
 ];
+
+function normalizeInlineText(value: string, maxLength = 180): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function clipText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function summarizeImageSource(src: string): string {
+  try {
+    const url = new URL(src);
+    const path = url.pathname.split("/").filter(Boolean);
+    const file = path[path.length - 1] ?? url.hostname;
+    return clipText(`${url.hostname}/${file}`, 60);
+  } catch {
+    return clipText(src, 60);
+  }
+}
 
 export class CommandBar {
   private readonly host: HTMLDivElement;
@@ -92,6 +129,13 @@ export class CommandBar {
   private ttsAudioUrl: string | null = null;
   private ttsAbortController: AbortController | null = null;
   private ttsRequestId = 0;
+  private agentMode = true;
+  private imagePickerOpen = false;
+  private visibleImageCandidates: ShellImageCandidateModel[] = [];
+  private readonly selectedImageCandidateIds = new Set<string>();
+  private readonly selectedImageCandidatesById = new Map<string, ShellImageCandidateModel>();
+  private viewportScanRafId: number | null = null;
+  private imageSelectionViewportListenersBound = false;
 
   constructor(onSubmit: SubmitHandler) {
     this.onSubmit = onSubmit;
@@ -122,6 +166,10 @@ export class CommandBar {
       }
 
       event.preventDefault();
+      if (this.imagePickerOpen) {
+        this.setImageSelectionMode(false);
+        return;
+      }
       this.close();
     });
 
@@ -145,9 +193,13 @@ export class CommandBar {
   close(): void {
     this.stopMicCapture();
     this.stopSpeechOutput();
+    this.setImageSelectionMode(false);
     this.isOpen = false;
     this.pinned = false;
     this.collapsed = false;
+    this.visibleImageCandidates = [];
+    this.selectedImageCandidateIds.clear();
+    this.selectedImageCandidatesById.clear();
     this.render();
   }
 
@@ -283,6 +335,10 @@ export class CommandBar {
       sources: [],
       menuOptions: MENU_OPTIONS,
       completedTasks: this.completedTasks,
+      agentMode: this.agentMode,
+      imagePickerOpen: this.imagePickerOpen,
+      imageCandidates: this.visibleImageCandidates,
+      selectedImageIds: Array.from(this.selectedImageCandidateIds),
       hiding: false,
       collapsed: this.collapsed,
       pinned: this.pinned,
@@ -333,6 +389,51 @@ export class CommandBar {
       },
       onTogglePin: () => {
         this.pinned = !this.pinned;
+        if (this.pinned) {
+          this.setImageSelectionMode(false);
+        }
+        this.render();
+      },
+      onToggleAgentMode: () => {
+        this.agentMode = !this.agentMode;
+        this.render();
+      },
+      onImagePickerTrigger: () => {
+        if (this.imagePickerOpen) {
+          this.setImageSelectionMode(false);
+          this.render();
+          return;
+        }
+
+        this.setImageSelectionMode(true);
+        this.scanVisibleImages();
+      },
+      onImagePickerClose: () => {
+        this.setImageSelectionMode(false);
+        this.render();
+      },
+      onRefreshImages: () => {
+        if (!this.imagePickerOpen) {
+          return;
+        }
+        this.scanVisibleImages();
+      },
+      onToggleImageSelection: (id: string) => {
+        const visibleCandidate = this.visibleImageCandidates.find((candidate) => candidate.id === id) ?? null;
+        if (this.selectedImageCandidateIds.has(id)) {
+          this.selectedImageCandidateIds.delete(id);
+          this.selectedImageCandidatesById.delete(id);
+        } else {
+          this.selectedImageCandidateIds.add(id);
+          if (visibleCandidate) {
+            this.selectedImageCandidatesById.set(id, visibleCandidate);
+          }
+        }
+        this.render();
+      },
+      onClearSelectedImages: () => {
+        this.selectedImageCandidateIds.clear();
+        this.selectedImageCandidatesById.clear();
         this.render();
       }
     };
@@ -362,10 +463,218 @@ export class CommandBar {
     this.findings = [];
     this.traceResults = [];
     this.collapsed = false;
+    this.setImageSelectionMode(false);
     this.open();
     this.render();
 
-    await this.onSubmit(prompt);
+    await this.onSubmit({
+      prompt: this.buildPromptWithSelectedImageContext(prompt),
+      agentMode: this.agentMode
+    });
+  }
+
+  private readonly handleViewportChange = (): void => {
+    if (!this.imagePickerOpen) {
+      return;
+    }
+
+    if (this.viewportScanRafId !== null) {
+      return;
+    }
+
+    this.viewportScanRafId = window.requestAnimationFrame(() => {
+      this.viewportScanRafId = null;
+      if (!this.imagePickerOpen) {
+        return;
+      }
+
+      this.scanVisibleImages();
+    });
+  };
+
+  private setImageSelectionMode(open: boolean): void {
+    this.imagePickerOpen = open;
+
+    if (!open) {
+      this.visibleImageCandidates = [];
+    }
+
+    this.syncImageSelectionViewportListeners();
+  }
+
+  private syncImageSelectionViewportListeners(): void {
+    const shouldBind = this.imagePickerOpen;
+    if (shouldBind === this.imageSelectionViewportListenersBound) {
+      if (!shouldBind && this.viewportScanRafId !== null) {
+        window.cancelAnimationFrame(this.viewportScanRafId);
+        this.viewportScanRafId = null;
+      }
+      return;
+    }
+
+    if (shouldBind) {
+      window.addEventListener("scroll", this.handleViewportChange, { capture: true, passive: true });
+      window.addEventListener("resize", this.handleViewportChange, { passive: true });
+      this.imageSelectionViewportListenersBound = true;
+      return;
+    }
+
+    window.removeEventListener("scroll", this.handleViewportChange, true);
+    window.removeEventListener("resize", this.handleViewportChange);
+    this.imageSelectionViewportListenersBound = false;
+    if (this.viewportScanRafId !== null) {
+      window.cancelAnimationFrame(this.viewportScanRafId);
+      this.viewportScanRafId = null;
+    }
+  }
+
+  private scanVisibleImages(): void {
+    const candidates = this.collectVisibleImageCandidates();
+    this.visibleImageCandidates = candidates;
+
+    // Refresh metadata for already-selected items that are visible again.
+    for (const candidate of candidates) {
+      if (this.selectedImageCandidateIds.has(candidate.id)) {
+        this.selectedImageCandidatesById.set(candidate.id, candidate);
+      }
+    }
+
+    this.imagePickerOpen = true;
+    this.syncImageSelectionViewportListeners();
+    this.render();
+  }
+
+  private collectVisibleImageCandidates(): ShellImageCandidateModel[] {
+    const viewportWidth = Math.max(window.innerWidth, 1);
+    const viewportHeight = Math.max(window.innerHeight, 1);
+    const seen = new Set<string>();
+    const candidates: ShellImageCandidateModel[] = [];
+
+    for (const img of Array.from(document.images)) {
+      const src = (img.currentSrc || img.src || "").trim();
+      if (!src) {
+        continue;
+      }
+
+      const rect = img.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
+        continue;
+      }
+
+      if (rect.width < 36 || rect.height < 36) {
+        continue;
+      }
+
+      if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) {
+        continue;
+      }
+
+      const style = getComputedStyle(img);
+      if (style.display === "none" || style.visibility === "hidden") {
+        continue;
+      }
+
+      const opacity = Number.parseFloat(style.opacity || "1");
+      if (!Number.isNaN(opacity) && opacity <= 0.05) {
+        continue;
+      }
+
+      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      if (visibleWidth * visibleHeight < 900) {
+        continue;
+      }
+
+      const displayWidth = Math.max(1, Math.round(rect.width));
+      const displayHeight = Math.max(1, Math.round(rect.height));
+      const viewportLeft = Math.round(rect.left);
+      const viewportTop = Math.round(rect.top);
+      const id = `${src}|${viewportLeft}|${viewportTop}|${displayWidth}x${displayHeight}`;
+
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+
+      const figure = img.closest("figure");
+      const figcaption = figure?.querySelector("figcaption");
+      const linkEl = img.closest("a");
+      const linkUrl = linkEl instanceof HTMLAnchorElement ? linkEl.href : null;
+
+      const alt = normalizeInlineText(img.alt ?? "", 180) || null;
+      const title = normalizeInlineText(img.title ?? "", 180) || null;
+      const caption = normalizeInlineText(figcaption?.textContent ?? "", 180) || null;
+
+      candidates.push({
+        id,
+        src,
+        label: summarizeImageSource(src),
+        alt,
+        title,
+        caption,
+        linkUrl,
+        viewportTop,
+        viewportLeft,
+        displayWidth,
+        displayHeight,
+        naturalWidth: Math.max(0, Math.round(img.naturalWidth || 0)),
+        naturalHeight: Math.max(0, Math.round(img.naturalHeight || 0))
+      });
+    }
+
+    candidates.sort((a, b) => {
+      if (a.viewportTop !== b.viewportTop) {
+        return a.viewportTop - b.viewportTop;
+      }
+
+      if (a.viewportLeft !== b.viewportLeft) {
+        return a.viewportLeft - b.viewportLeft;
+      }
+
+      return (b.displayWidth * b.displayHeight) - (a.displayWidth * a.displayHeight);
+    });
+
+    return candidates.slice(0, MAX_VISIBLE_IMAGE_CANDIDATES);
+  }
+
+  private buildPromptWithSelectedImageContext(prompt: string): string {
+    const selected = Array.from(this.selectedImageCandidatesById.values());
+    if (selected.length === 0) {
+      return prompt;
+    }
+
+    const included = selected.slice(0, MAX_IMAGE_CONTEXT_ITEMS);
+    const lines: string[] = [prompt, "", "Selected visible images (user-selected page context):"];
+
+    included.forEach((image, index) => {
+      lines.push(`${index + 1}. src: ${clipText(image.src, 500)}`);
+
+      if (image.alt) {
+        lines.push(`   alt: ${clipText(image.alt, 220)}`);
+      }
+      if (image.caption) {
+        lines.push(`   caption: ${clipText(image.caption, 220)}`);
+      }
+      if (image.title) {
+        lines.push(`   title: ${clipText(image.title, 220)}`);
+      }
+      if (image.linkUrl) {
+        lines.push(`   link: ${clipText(image.linkUrl, 500)}`);
+      }
+
+      const naturalWidth = image.naturalWidth > 0 ? String(image.naturalWidth) : "?";
+      const naturalHeight = image.naturalHeight > 0 ? String(image.naturalHeight) : "?";
+      lines.push(
+        `   displayed: ${image.displayWidth}x${image.displayHeight}px | natural: ${naturalWidth}x${naturalHeight}px | viewport: (${image.viewportLeft}, ${image.viewportTop})`
+      );
+    });
+
+    if (selected.length > included.length) {
+      lines.push(`... ${selected.length - included.length} more selected image(s) omitted.`);
+    }
+
+    lines.push("Use this metadata as additional context for the request.");
+    return lines.join("\n");
   }
 
   private getSpeechRecognitionCtor(): SpeechRecognitionCtorLike | null {

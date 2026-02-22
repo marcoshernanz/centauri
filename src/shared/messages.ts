@@ -1,6 +1,7 @@
 import type { ActionExecutionResult, AgentAction, ExecutionLimits } from "./actions";
 
 export type UIState = "idle" | "planning" | "executing" | "summarizing" | "done" | "error";
+export type InteractionMode = "agent" | "chat";
 
 export type PageContextSnapshot = {
   urlPath: string;
@@ -27,6 +28,7 @@ export type ShowResultMessage = {
   type: "ui/show-result";
   payload: {
     ok: boolean;
+    mode?: InteractionMode;
     summary?: string;
     error?: string;
     results?: ActionExecutionResult[];
@@ -40,6 +42,7 @@ export type SubmitTaskMessage = {
   type: "agent/submit-task";
   payload: {
     prompt: string;
+    agentMode?: boolean;
     pageUrl: string;
     pageTitle: string;
     pageContext: PageContextSnapshot;
@@ -50,6 +53,7 @@ export type SubmitTaskResponse = {
   ok: boolean;
   payload: {
     state: UIState;
+    mode?: InteractionMode;
     summary?: string;
     error?: string;
     results?: ActionExecutionResult[];

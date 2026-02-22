@@ -8,6 +8,7 @@ import {
 import type {
   ExecuteActionsMessage,
   ExecuteActionsResponse,
+  InteractionMode,
   RuntimeMessage,
   ShowResultMessage,
   SubmitTaskMessage,
@@ -153,25 +154,40 @@ chrome.runtime.onMessage.addListener(
 
 async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.MessageSender): Promise<SubmitTaskResponse> {
   const runStartedAt = Date.now();
+  const interactionMode: InteractionMode = message.payload.agentMode === false ? "chat" : "agent";
   const trimmedPrompt = message.payload.prompt.trim();
 
   if (!trimmedPrompt) {
-    return toError("Prompt cannot be empty");
+    return toError("Prompt cannot be empty", [], interactionMode);
   }
 
   const tabId = sender.tab?.id;
   if (!tabId) {
-    return toError("Cannot identify active tab");
+    return toError("Cannot identify active tab", [], interactionMode);
   }
 
   await showRunShellState(tabId, "executing");
 
-  const targetCount = parseRequestedCount(trimmedPrompt);
-  const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
   const agentConfig = await loadAgentConfig();
   const claudeConfig = await loadClaudeConfig();
 
   let response: SubmitTaskResponse;
+
+  if (interactionMode === "chat") {
+    response = await runChatFlow({
+      prompt: trimmedPrompt,
+      pageTitle: message.payload.pageTitle,
+      pageUrl: message.payload.pageUrl,
+      pageContext: message.payload.pageContext,
+      claudeConfig,
+      agentConfig
+    });
+    await pushUiResult(tabId, response, Date.now() - runStartedAt);
+    return response;
+  }
+
+  const targetCount = parseRequestedCount(trimmedPrompt);
+  const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
 
   if (isHackerNewsTask(trimmedPrompt, message.payload.pageUrl)) {
     response = await runHackerNewsFlow(tabId, trimmedPrompt, targetCount, claudeConfig, agentConfig);
@@ -197,6 +213,48 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   );
   await pushUiResult(tabId, response, Date.now() - runStartedAt);
   return response;
+}
+
+async function runChatFlow(input: {
+  prompt: string;
+  pageTitle: string;
+  pageUrl: string;
+  pageContext: SubmitTaskMessage["payload"]["pageContext"];
+  claudeConfig: ClaudeConfig | null;
+  agentConfig: AgentConfig;
+}): Promise<SubmitTaskResponse> {
+  if (!input.claudeConfig) {
+    return toError("Anthropic API key not configured", [], "chat");
+  }
+
+  const systemPrompt = [
+    "You are a helpful browser sidebar chat assistant.",
+    "Respond directly to the user's request in normal chat mode.",
+    "You cannot click, navigate, or inspect the live DOM in this mode.",
+    "Use only the provided page metadata/context and the user's message.",
+    "If the user needs browser automation, tell them to enable agent mode."
+  ].join("\n");
+
+  const userPrompt = [
+    `User request: ${input.prompt}`,
+    `Current page title: ${input.pageTitle}`,
+    `Current page URL: ${input.pageUrl}`,
+    "Page context snapshot (headings and candidate controls/links):",
+    JSON.stringify(input.pageContext)
+  ].join("\n\n");
+
+  try {
+    const summary = await callClaude(
+      input.claudeConfig,
+      systemPrompt,
+      userPrompt,
+      input.agentConfig.claude.summaryMaxTokens
+    );
+
+    return toSuccess(summary.trim(), [], [], "chat");
+  } catch (error: unknown) {
+    return toError(error instanceof Error ? error.message : "Chat request failed", [], "chat");
+  }
 }
 
 async function runHackerNewsFlow(
@@ -1713,12 +1771,17 @@ async function injectContentScript(tabId: number): Promise<boolean> {
   }
 }
 
-function toError(error: string, results: ActionExecutionResult[] = []): SubmitTaskResponse {
+function toError(
+  error: string,
+  results: ActionExecutionResult[] = [],
+  mode: InteractionMode = "agent"
+): SubmitTaskResponse {
   const warnings = results.some((result) => !result.ok) ? ["Execution ended with failures."] : [];
   return {
     ok: false,
     payload: {
       state: "error",
+      mode,
       error,
       results,
       partial: results.length > 0,
@@ -1727,7 +1790,12 @@ function toError(error: string, results: ActionExecutionResult[] = []): SubmitTa
   };
 }
 
-function toSuccess(summary: string, results: ActionExecutionResult[], warnings: string[] = []): SubmitTaskResponse {
+function toSuccess(
+  summary: string,
+  results: ActionExecutionResult[],
+  warnings: string[] = [],
+  mode: InteractionMode = "agent"
+): SubmitTaskResponse {
   const runtimeWarnings = [...warnings];
   if (results.some((result) => !result.ok) && !runtimeWarnings.some((warning) => warning.includes("failed"))) {
     runtimeWarnings.push("Some actions failed.");
@@ -1737,6 +1805,7 @@ function toSuccess(summary: string, results: ActionExecutionResult[], warnings: 
     ok: true,
     payload: {
       state: "done",
+      mode,
       summary,
       results,
       partial: runtimeWarnings.length > 0,
@@ -1760,6 +1829,7 @@ async function pushUiResult(tabId: number, response: SubmitTaskResponse, elapsed
     type: "ui/show-result",
     payload: {
       ok: response.ok,
+      mode: response.payload.mode,
       summary: response.payload.summary,
       error: response.payload.error,
       results: response.payload.results ?? [],

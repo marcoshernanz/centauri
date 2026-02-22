@@ -23,6 +23,22 @@ export type CompletedTaskModel = {
   summary: string | null;
 };
 
+export type ShellImageCandidateModel = {
+  id: string;
+  src: string;
+  label: string;
+  alt: string | null;
+  title: string | null;
+  caption: string | null;
+  linkUrl: string | null;
+  viewportTop: number;
+  viewportLeft: number;
+  displayWidth: number;
+  displayHeight: number;
+  naturalWidth: number;
+  naturalHeight: number;
+};
+
 export type ShellViewModel = {
   prompt: string;
   promptPlaceholder: string;
@@ -45,6 +61,10 @@ export type ShellViewModel = {
   sources: SourceModel[];
   menuOptions: MenuOption[];
   completedTasks: CompletedTaskModel[];
+  agentMode: boolean;
+  imagePickerOpen: boolean;
+  imageCandidates: ShellImageCandidateModel[];
+  selectedImageIds: string[];
   hiding: boolean;
   collapsed: boolean;
   pinned: boolean;
@@ -64,6 +84,12 @@ export type ShellCallbacks = {
   onCollapse: () => void;
   onExpand: () => void;
   onTogglePin: () => void;
+  onToggleAgentMode: () => void;
+  onImagePickerTrigger: () => void;
+  onImagePickerClose: () => void;
+  onRefreshImages: () => void;
+  onToggleImageSelection: (id: string) => void;
+  onClearSelectedImages: () => void;
 };
 
 type ShellAppProps = {
@@ -100,6 +126,24 @@ const SpeakerIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
     <path d="M14.5 4.5a1 1 0 0 1 1.7.7v13.6a1 1 0 0 1-1.7.7L9.5 15H6a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h3.5l5-4.5Z" />
     <path d="M19.7 8.3a1 1 0 0 1 1.4 0 5.2 5.2 0 0 1 0 7.4 1 1 0 0 1-1.4-1.4 3.2 3.2 0 0 0 0-4.6 1 1 0 0 1 0-1.4Z" />
+  </svg>
+);
+
+const ImageIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
+    <circle cx="9" cy="10" r="1.4" fill="currentColor" />
+    <path d="M6 17l4.2-4.4a1 1 0 0 1 1.45.02L14 15l2.1-2.1a1 1 0 0 1 1.42 0L19 14.4V17H6Z" fill="currentColor" />
+  </svg>
+);
+
+const AgentModeIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="4" y="5" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.8" />
+    <circle cx="9" cy="11" r="1.1" fill="currentColor" />
+    <circle cx="15" cy="11" r="1.1" fill="currentColor" />
+    <path d="M12 5V3.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    <path d="M9 15.2c.8.7 1.8 1 3 1s2.2-.3 3-1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
   </svg>
 );
 
@@ -366,10 +410,48 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
   const micBlocked = view.micDisabled && !view.micActive;
   const ttsBlocked = view.ttsDisabled && !view.ttsActive && !view.ttsBusy;
   const logoSrc = CENTURI_LOGO.startsWith("data:") ? CENTURI_LOGO : `data:image/png;base64,${CENTURI_LOGO}`;
+  const selectedImageIds = new Set(view.selectedImageIds);
+  const imageSelectionCount = view.selectedImageIds.length;
+  const imageSelectionMode = view.imagePickerOpen;
+  const agentMode = view.agentMode;
 
   return (
     <>
       <style>{SHELL_CSS}</style>
+      {imageSelectionMode && !view.pinned && (
+        <div className="sp-image-overlay-layer">
+          {view.imageCandidates.map((image) => {
+            const selected = selectedImageIds.has(image.id);
+            const width = Math.max(1, image.displayWidth);
+            const height = Math.max(1, image.displayHeight);
+
+            return (
+              <button
+                key={image.id}
+                className={`sp-image-overlay-hitbox${selected ? " sp-image-overlay-hitbox--selected" : ""}`}
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  callbacks.onToggleImageSelection(image.id);
+                }}
+                style={{
+                  left: `${image.viewportLeft}px`,
+                  top: `${image.viewportTop}px`,
+                  width: `${width}px`,
+                  height: `${height}px`,
+                }}
+                title={selected ? "Quitar imagen del contexto" : "Añadir imagen al contexto"}
+                aria-label={selected ? "Quitar imagen del contexto" : "Añadir imagen al contexto"}
+                aria-pressed={selected}
+              >
+                <span className="sp-image-overlay-glow" />
+                <span className="sp-image-overlay-chip">{selected ? "Selected" : "Image"}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div
         ref={containerRef}
         className={`sp-shell${view.hiding ? " sp-hiding" : ""}${view.collapsed ? " sp-collapsed" : ""}${view.pinned ? " sp-pinned" : ""}`}
@@ -489,6 +571,17 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
             alt="Centuri"
             draggable={false}
           />
+          <button
+            className={`sp-agent-mode-btn${agentMode ? " sp-agent-mode-btn--active" : ""}`}
+            type="button"
+            onClick={callbacks.onToggleAgentMode}
+            disabled={view.promptDisabled}
+            title={agentMode ? "Agent mode enabled" : "Agent mode disabled (chat only)"}
+            aria-pressed={agentMode}
+            aria-label={agentMode ? "Disable agent mode" : "Enable agent mode"}
+          >
+            <AgentModeIcon />
+          </button>
 
             {/* Expand button — visible only when soft-collapsed and there's history to show */}
             {view.collapsed && hasHistory && (
@@ -513,6 +606,27 @@ export const ShellApp = ({ view, callbacks }: ShellAppProps) => {
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
               />
+              <button
+                className={`sp-image-btn${imageSelectionCount > 0 ? " sp-image-btn--active" : ""}`}
+                type="button"
+                onClick={callbacks.onImagePickerTrigger}
+                disabled={view.promptDisabled}
+                title={
+                  imageSelectionMode
+                    ? "Close image selection"
+                    : imageSelectionCount > 0
+                      ? `Select images (${imageSelectionCount} selected)`
+                      : "Select visible images"
+                }
+                aria-pressed={imageSelectionMode}
+              >
+                <ImageIcon />
+                {imageSelectionCount > 0 && (
+                  <span className="sp-image-badge" aria-hidden="true">
+                    {imageSelectionCount > 9 ? "9+" : imageSelectionCount}
+                  </span>
+                )}
+              </button>
               <button
                 className={`sp-mic-btn${view.micActive ? " sp-mic-active" : ""}${view.micBusy ? " sp-mic-busy" : ""}`}
                 type="button"
@@ -880,6 +994,229 @@ const SHELL_CSS = `
   opacity: 1;
 }
 
+.sp-agent-mode-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  color: var(--sp-text-dim);
+  transition: background 0.11s ease, color 0.11s ease, box-shadow 0.11s ease;
+}
+.sp-agent-mode-btn:hover:not(:disabled) {
+  background: hsl(215.4 31.8% 16.9% / 0.95);
+  color: var(--sp-text);
+}
+.sp-agent-mode-btn:disabled {
+  color: rgba(255,255,255,0.22);
+  cursor: not-allowed;
+}
+.sp-agent-mode-btn--active {
+  background: hsl(24.6 95% 53.1% / 0.14);
+  color: hsl(24.6 95% 62%);
+  box-shadow: inset 0 0 0 1px hsl(24.6 95% 53.1% / 0.18);
+}
+
+.sp-image-overlay-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sp-image-overlay-hitbox {
+  position: fixed;
+  border: 1px solid hsl(24.6 95% 53.1% / 0.55);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, hsl(24.6 95% 53.1% / 0.18), hsl(36 100% 55% / 0.08));
+  box-shadow:
+    inset 0 0 0 1px hsl(24.6 95% 70% / 0.08),
+    0 0 0 1px hsl(24.6 95% 53.1% / 0.12);
+  cursor: pointer;
+  pointer-events: auto;
+  padding: 0;
+  overflow: hidden;
+  transition: transform 0.08s ease, border-color 0.11s ease, box-shadow 0.11s ease, background 0.11s ease;
+}
+.sp-image-overlay-hitbox:hover {
+  border-color: hsl(24.6 95% 62% / 0.9);
+  background:
+    linear-gradient(135deg, hsl(24.6 95% 53.1% / 0.24), hsl(36 100% 55% / 0.12));
+  box-shadow:
+    inset 0 0 0 1px hsl(24.6 95% 70% / 0.16),
+    0 0 0 1px hsl(24.6 95% 53.1% / 0.2),
+    0 8px 22px hsl(24.6 95% 20% / 0.22);
+}
+.sp-image-overlay-hitbox--selected {
+  border-color: hsl(24.6 95% 62% / 0.96);
+  background:
+    linear-gradient(135deg, hsl(24.6 95% 53.1% / 0.34), hsl(36 100% 55% / 0.18));
+  box-shadow:
+    inset 0 0 0 1px hsl(24.6 95% 75% / 0.26),
+    0 0 0 1px hsl(24.6 95% 53.1% / 0.28),
+    0 10px 28px hsl(24.6 95% 20% / 0.26);
+}
+
+.sp-image-overlay-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 12% 10%, hsl(24.6 95% 62% / 0.28), transparent 48%),
+    radial-gradient(circle at 88% 90%, hsl(32 100% 60% / 0.22), transparent 54%);
+  pointer-events: none;
+}
+
+.sp-image-overlay-chip {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: hsl(222.2 84% 4.9% / 0.78);
+  border: 1px solid hsl(24.6 95% 62% / 0.45);
+  color: hsl(24.6 95% 80%);
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+
+.sp-image-panel {
+  border-top: 1px solid hsl(215.4 31.8% 16.9% / 0.9);
+  background: linear-gradient(180deg, hsl(222.2 47.4% 11.2% / 0.96), hsl(222.2 84% 4.9% / 0.98));
+  padding: 8px 10px 10px;
+}
+
+.sp-image-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sp-image-panel-title {
+  min-width: 0;
+  color: var(--sp-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.sp-image-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sp-image-mini-btn {
+  border: 1px solid hsl(215.4 31.8% 16.9% / 0.95);
+  background: hsl(222.2 47.4% 11.2% / 0.9);
+  color: var(--sp-text-dim);
+  border-radius: 7px;
+  padding: 4px 7px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.11s ease, background 0.11s ease, border-color 0.11s ease;
+}
+.sp-image-mini-btn:hover {
+  color: var(--sp-text);
+  background: hsl(215.4 31.8% 16.9% / 0.95);
+  border-color: hsl(215.3 19.3% 34.5% / 0.75);
+}
+
+.sp-image-empty {
+  color: var(--sp-text-dim);
+  font-size: 11.5px;
+  line-height: 1.35;
+  padding: 8px 4px 4px;
+}
+
+.sp-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.sp-image-grid::-webkit-scrollbar { width: 4px; }
+.sp-image-grid::-webkit-scrollbar-track { background: transparent; }
+.sp-image-grid::-webkit-scrollbar-thumb { background: hsl(215.4 31.8% 16.9% / 0.9); border-radius: 4px; }
+
+.sp-image-card {
+  border: 1px solid hsl(215.4 31.8% 16.9% / 0.9);
+  background: hsl(222.2 47.4% 11.2% / 0.72);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--sp-text);
+  min-width: 0;
+  transition: border-color 0.11s ease, background 0.11s ease;
+}
+.sp-image-card:hover {
+  border-color: hsl(215.3 19.3% 34.5% / 0.85);
+  background: hsl(215.4 31.8% 16.9% / 0.8);
+}
+.sp-image-card--selected {
+  border-color: hsl(24.6 95% 53.1% / 0.85);
+  background: hsl(24.6 95% 53.1% / 0.12);
+  box-shadow: inset 0 0 0 1px hsl(24.6 95% 53.1% / 0.22);
+}
+
+.sp-image-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: hsl(222.2 84% 4.9% / 0.8);
+  border-radius: 7px;
+  display: block;
+}
+
+.sp-image-card-meta {
+  min-width: 0;
+}
+
+.sp-image-card-title {
+  font-size: 11.5px;
+  line-height: 1.25;
+  color: var(--sp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-image-card-sub {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--sp-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-image-footer {
+  margin-top: 8px;
+  color: hsl(24.6 95% 70%);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
 .sp-input-row {
   flex: 1;
   min-width: 0;
@@ -911,6 +1248,50 @@ const SHELL_CSS = `
 }
 .sp-input::placeholder { color: var(--sp-text-dim); }
 .sp-input:disabled     { opacity: 0.35; cursor: not-allowed; }
+
+.sp-image-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  color: var(--sp-text-dim);
+  transition: background 0.11s ease, color 0.11s ease;
+}
+.sp-image-btn:hover:not(:disabled) {
+  background: hsl(215.4 31.8% 16.9% / 0.95);
+  color: var(--sp-text);
+}
+.sp-image-btn:disabled {
+  color: rgba(255,255,255,0.22);
+  cursor: not-allowed;
+}
+.sp-image-btn--active {
+  background: hsl(24.6 95% 53.1% / 0.14);
+  color: hsl(24.6 95% 62%);
+}
+.sp-image-badge {
+  position: absolute;
+  top: -3px;
+  right: -2px;
+  min-width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: var(--sp-accent);
+  color: #fff;
+  font-size: 9px;
+  line-height: 15px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--sp-slate-950);
+}
 
 .sp-mic-btn {
   flex-shrink: 0;

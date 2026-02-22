@@ -9,7 +9,7 @@ import type {
   SubmitTaskResponse
 } from "../shared/messages";
 import { executeActions } from "./executor/runner";
-import { CommandBar } from "./ui/commandBar";
+import { CommandBar, type CommandBarSubmitRequest } from "./ui/commandBar";
 
 declare global {
   interface Window {
@@ -24,7 +24,7 @@ if (!window.__nwaInitialized) {
 
 function initializeContentScript(): void {
   let commandBar: CommandBar;
-  commandBar = new CommandBar(async (prompt: string) => handleSubmitTask(commandBar, prompt));
+  commandBar = new CommandBar(async (request: CommandBarSubmitRequest) => handleSubmitTask(commandBar, request));
 
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message.type === "ui/toggle-command-bar") {
@@ -80,12 +80,15 @@ function initializeContentScript(): void {
   });
 }
 
-async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise<void> {
+async function handleSubmitTask(commandBar: CommandBar, request: CommandBarSubmitRequest): Promise<void> {
+  const { prompt, agentMode } = request;
   const startedAt = Date.now();
   commandBar.clearOutput();
   commandBar.clearTrace();
-  commandBar.setState("planning");
-  await sleep(120);
+  if (agentMode) {
+    commandBar.setState("planning");
+    await sleep(120);
+  }
 
   commandBar.setState("executing");
 
@@ -95,12 +98,13 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
     response = await chrome.runtime.sendMessage<SubmitTaskMessage, SubmitTaskResponse>({
       type: "agent/submit-task",
       payload: {
-      prompt,
-      pageUrl: window.location.href,
-      pageTitle: document.title,
-      pageContext: collectPageContext()
-    }
-  });
+        prompt,
+        agentMode,
+        pageUrl: window.location.href,
+        pageTitle: document.title,
+        pageContext: collectPageContext()
+      }
+    });
   } catch {
     // During navigation the originating content script may be torn down.
     // The background will push the final output to the active page via ui/show-result.
@@ -108,7 +112,9 @@ async function handleSubmitTask(commandBar: CommandBar, prompt: string): Promise
   }
 
   commandBar.setState("summarizing");
-  await sleep(100);
+  if (agentMode) {
+    await sleep(100);
+  }
 
   if (!response?.ok) {
     commandBar.setState("error");
@@ -150,6 +156,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): string {
+  if (response.payload.mode === "chat") {
+    return response.payload.summary ?? "No response returned.";
+  }
+
   const elapsedMs = Date.now() - startedAt;
   const results = response.payload.results ?? [];
   const okCount = results.filter((result) => result.ok).length;
@@ -174,6 +184,10 @@ function formatFinalOutput(response: SubmitTaskResponse, startedAt: number): str
 }
 
 function formatUiResultMessage(message: ShowResultMessage): string {
+  if (message.payload.mode === "chat") {
+    return message.payload.summary ?? "No response returned.";
+  }
+
   const elapsedMs = message.payload.elapsedMs ?? 0;
   const results = message.payload.results ?? [];
   const okCount = results.filter((result) => result.ok).length;
