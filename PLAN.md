@@ -98,6 +98,7 @@
 | T45 | P1 | DONE | Image/chat executing-state polish + direct chat-LLM response + spoken-input display fix | 20m | T44 | Image submissions keep executing animation while waiting; chat mode uses plain Claude response from DOM snapshot (no structured wrapper); submitted active prompt is rendered in history (including speech submissions) |
 | T46 | P1 | DONE | Hotkey toggle regression fix (second press closes shell reliably) | 10m | T37 | Pressing `Ctrl/Cmd+Shift+Space` while a shell is open now closes the topmost visible shell instead of spawning a new one; rebuilt extension bundle reflects source behavior |
 | T47 | P1 | DONE | Humanize Gemini image-response format defaults | 15m | T40,T45 | Gemini image prompt now defaults to plain natural-language 1-2 paragraph responses and avoids rigid numbered markdown sections unless the user explicitly requests structured formatting |
+| T48 | P0 | DONE | Force hardcoded HN/Gmail agent routing in `final_v` and broaden intent matching | 20m | T13,T14,T42 | HN/Gmail deterministic flows run even if shell mode is Chat; intent matching accepts `hack news`/`hn`; build + typecheck pass |
 
 ## 5) Architecture Implementation Details
 
@@ -260,6 +261,7 @@ Each action payload includes:
   - T45 Executing-state + direct chat response + prompt-display polish
   - T46 Hotkey toggle regression fix for close-on-second-press behavior
   - T47 Humanized Gemini image-response default format
+  - T48 Hardcoded HN/Gmail routing priority and intent matching hardening
 - In progress:
   - None
 - Next up:
@@ -475,6 +477,11 @@ Each action payload includes:
     - default image output now asks for direct, natural 1-2 paragraph text and only uses structured formats when explicitly requested by the user.
     - added guardrail to avoid template-style openers like “Here's information about ...”.
   - Re-verified T47 with `npm run typecheck` and `npm run build`.
+  - Completed T48 hardcoded demo-routing hardening for `final_v`:
+    - updated `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` so Gmail/Hacker News hardcoded flows are resolved before chat-mode branching, ensuring deterministic adapter execution on demo-critical domains.
+    - expanded Hacker News intent detection to include prompt variants like `hack news` and `hn`.
+    - added `detectHardcodedTask` helper for explicit route resolution while preserving existing generic and image flows.
+  - Re-verified T48 with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
