@@ -74,7 +74,11 @@ export function buildPlannerRepairUserPrompt(rawPlannerOutput: string): string {
 export function buildHackerNewsSummaryPrompt(task: string, snippets: Array<{ title: string; url: string; preview: string }>): string {
   return [
     `Task: ${task}`,
-    "Summarize the articles below in clear bullets:",
+    "Write a concise, human-readable summary with this structure:",
+    "1) Top Takeaways (3 bullets)",
+    "2) Article-by-Article Summary (one short bullet per article)",
+    "3) Why it matters (2 bullets)",
+    "Keep each bullet short. Do not dump raw snippets.",
     JSON.stringify(snippets)
   ].join("\n\n");
 }
@@ -82,7 +86,11 @@ export function buildHackerNewsSummaryPrompt(task: string, snippets: Array<{ tit
 export function buildGmailSummaryPrompt(task: string, snippets: Array<{ index: number; preview: string }>): string {
   return [
     `Task: ${task}`,
-    "Summarize these unread-email snippets with priorities:",
+    "Write a concise inbox summary with this structure:",
+    "1) Inbox Snapshot (1 short paragraph)",
+    "2) Priority Emails (High/Medium/Low grouped bullets)",
+    "3) Suggested Next Actions (numbered list)",
+    "Use plain language and avoid copying raw snippets.",
     JSON.stringify(snippets)
   ].join("\n\n");
 }
@@ -107,7 +115,7 @@ export function buildGenericSummaryPrompt(input: {
     `Page: ${input.pageTitle} (${input.pageUrl})`,
     "Execution context:",
     JSON.stringify(compactResults),
-    "Provide a concise final answer."
+    "Provide a concise final answer with: Summary, Key Points, Next Actions."
   ].join("\n\n");
 }
 

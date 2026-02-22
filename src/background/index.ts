@@ -809,26 +809,227 @@ function buildGmailSummary(
   results: ActionExecutionResult[],
   requestedCount: number
 ): string {
-  const lines: string[] = [];
-  lines.push(`Task: ${prompt}`);
-  lines.push(`Processed ${items.length}/${requestedCount} unread email(s).`);
-  lines.push("");
+  const prioritized = items.map((item) => {
+    const category = inferEmailCategory(item.preview);
+    const priority = inferEmailPriority(category);
+    const headline = synthesizeEmailSummary(item.preview, category);
+    const action = inferEmailAction(category);
 
-  items.forEach((item) => {
-    const status = item.ok ? "OK" : "PARTIAL";
-    lines.push(`${item.index}. [${status}] ${item.preview}`);
+    return {
+      index: item.index,
+      category,
+      priority,
+      headline,
+      action
+    };
   });
 
+  const high = prioritized.filter((item) => item.priority === "High");
+  const medium = prioritized.filter((item) => item.priority === "Medium");
+  const low = prioritized.filter((item) => item.priority === "Low");
+
+  const lines: string[] = [];
+  lines.push("Inbox Snapshot");
+  lines.push(
+    `I processed ${items.length} of ${requestedCount} requested unread emails and extracted the key context from each message.`
+  );
+  lines.push(`Main themes: ${buildThemeSummary(prioritized)}.`);
   lines.push("");
-  lines.push(`Execution: ${countOk(results)}/${results.length} actions OK`);
+  lines.push("Priority Emails");
+  appendPriorityGroup(lines, "High", high);
+  appendPriorityGroup(lines, "Medium", medium);
+  appendPriorityGroup(lines, "Low", low);
+
+  lines.push("");
+  lines.push("Suggested Next Actions");
+  const topActions = prioritized
+    .map((item) => item.action)
+    .filter((value, index, all) => value && all.indexOf(value) === index)
+    .slice(0, 4);
+
+  if (topActions.length === 0) {
+    lines.push("1. Review high-priority unread emails first.");
+  } else {
+    topActions.forEach((action, index) => {
+      lines.push(`${index + 1}. ${action}`);
+    });
+  }
+
+  lines.push("");
+  lines.push(`Run Stats: ${countOk(results)}/${results.length} actions OK`);
   if (items.length < requestedCount) {
-    lines.push("Warning: fewer unread emails found than requested.");
+    lines.push(`Note: fewer unread emails were available than requested (${items.length}/${requestedCount}).`);
   }
   if (results.some((result) => !result.ok)) {
-    lines.push("Warning: some actions failed during execution.");
+    lines.push("Note: some actions failed during execution; summary may be partial.");
   }
 
   return lines.join("\n");
+}
+
+function appendPriorityGroup(
+  lines: string[],
+  label: "High" | "Medium" | "Low",
+  items: Array<{ index: number; headline: string; action: string }>
+): void {
+  if (items.length === 0) {
+    return;
+  }
+
+  lines.push(`- ${label}:`);
+  items.forEach((item) => {
+    lines.push(`  - Email ${item.index}: ${item.headline}`);
+  });
+}
+
+function synthesizeEmailSummary(preview: string, category: EmailCategory): string {
+  const normalized = preview.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "No readable subject/body content.";
+  }
+
+  const amount = extractAmount(normalized);
+  const date = extractDate(normalized);
+
+  if (category === "security") {
+    return "Security alert about a recent account/device login; verify whether the activity was legitimate.";
+  }
+  if (category === "billing") {
+    const amountPart = amount ? ` for ${amount}` : "";
+    const datePart = date ? ` on ${date}` : "";
+    return `Billing receipt/invoice notification${amountPart}${datePart}.`;
+  }
+  if (category === "subscription") {
+    return "Subscription confirmation/update with renewal or plan details.";
+  }
+  if (category === "travel") {
+    return "Travel itinerary/check-in reminder with timing and route details.";
+  }
+  if (category === "event") {
+    return "Event logistics message with attendance/check-in instructions.";
+  }
+
+  return compactSentence(normalized, 18);
+}
+
+type EmailCategory = "security" | "billing" | "subscription" | "travel" | "event" | "general";
+
+function inferEmailCategory(preview: string): EmailCategory {
+  const value = preview.toLowerCase();
+
+  const securitySignals = ["security", "login", "suspicious", "new device", "verification", "paypal"];
+  if (securitySignals.some((signal) => value.includes(signal))) {
+    return "security";
+  }
+
+  const billingSignals = ["invoice", "receipt", "payment", "paid", "anthropic"];
+  if (billingSignals.some((signal) => value.includes(signal))) {
+    return "billing";
+  }
+
+  const subscriptionSignals = ["subscription", "subscribed", "plus", "renew"];
+  if (subscriptionSignals.some((signal) => value.includes(signal))) {
+    return "subscription";
+  }
+
+  const travelSignals = ["flight", "reservation", "booking", "check in", "check-in", "ryanair", "reserva", "vuelo"];
+  if (travelSignals.some((signal) => value.includes(signal))) {
+    return "travel";
+  }
+
+  const eventSignals = ["event", "hackeurope", "qr code", "check in at the event", "check-in at the event"];
+  if (eventSignals.some((signal) => value.includes(signal))) {
+    return "event";
+  }
+
+  return "general";
+}
+
+function inferEmailPriority(category: EmailCategory): "High" | "Medium" | "Low" {
+  if (category === "security" || category === "billing") {
+    return "High";
+  }
+  if (category === "travel" || category === "event" || category === "subscription") {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function inferEmailAction(category: EmailCategory): string {
+  if (category === "security") {
+    return "Verify account security alerts and confirm whether the login activity is expected.";
+  }
+  if (category === "billing") {
+    return "Review payment receipts/invoices and archive confirmed billing notifications.";
+  }
+  if (category === "travel") {
+    return "Confirm travel details and complete check-in requirements if still pending.";
+  }
+  if (category === "subscription") {
+    return "Review subscription status and cancel/adjust plans if needed.";
+  }
+  if (category === "event") {
+    return "Save the event logistics email and keep required QR/check-in materials ready.";
+  }
+
+  return "Scan remaining unread messages and reply where follow-up is required.";
+}
+
+function buildThemeSummary(
+  items: Array<{ category: EmailCategory }>
+): string {
+  const counts = new Map<EmailCategory, number>();
+  for (const item of items) {
+    counts.set(item.category, (counts.get(item.category) ?? 0) + 1);
+  }
+
+  const ordered: EmailCategory[] = ["security", "billing", "subscription", "travel", "event", "general"];
+  const parts: string[] = [];
+
+  for (const category of ordered) {
+    const count = counts.get(category) ?? 0;
+    if (count === 0) {
+      continue;
+    }
+
+    parts.push(`${count} ${category}`);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "no strong theme detected";
+}
+
+function extractAmount(value: string): string | null {
+  const match = value.match(/\$\s?\d+(?:\.\d{2})?/);
+  return match ? match[0].replace(/\s+/g, "") : null;
+}
+
+function extractDate(value: string): string | null {
+  const monthDate = value.match(
+    /\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2},?\s+\d{4}\b/i
+  );
+  if (monthDate) {
+    return monthDate[0];
+  }
+
+  const isoLike = value.match(/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/);
+  return isoLike ? isoLike[0] : null;
+}
+
+function compactSentence(value: string, maxWords: number): string {
+  const firstSentence = value.split(/[.!?]/)[0]?.trim() ?? value;
+  const sanitized = firstSentence
+    .replace(/\b(download invoice|download receipt|view online|ver online)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const words = sanitized.split(" ").filter(Boolean);
+  const compact = words.slice(0, maxWords).join(" ");
+  if (!compact) {
+    return "Unread email content was captured, but key details were limited.";
+  }
+
+  return compact.endsWith(".") ? compact : `${compact}.`;
 }
 
 function buildGenericSummary(

@@ -102,6 +102,25 @@ export async function loadClaudeConfig(): Promise<ClaudeConfig | null> {
 }
 
 export async function callClaude(config: ClaudeConfig, system: string, user: string, maxTokens = 900): Promise<string> {
+  try {
+    return await callClaudeWithModel(config, config.model, system, user, maxTokens);
+  } catch (error: unknown) {
+    // If a custom model fails (e.g. deprecated/invalid), retry once with a stable default.
+    if (config.model !== DEFAULT_MODEL) {
+      return callClaudeWithModel(config, DEFAULT_MODEL, system, user, maxTokens);
+    }
+
+    throw error;
+  }
+}
+
+async function callClaudeWithModel(
+  config: ClaudeConfig,
+  model: string,
+  system: string,
+  user: string,
+  maxTokens: number
+): Promise<string> {
   const response = await fetch(ANTHROPIC_ENDPOINT, {
     method: "POST",
     headers: {
@@ -110,7 +129,7 @@ export async function callClaude(config: ClaudeConfig, system: string, user: str
       "x-api-key": config.apiKey
     },
     body: JSON.stringify({
-      model: config.model,
+      model,
       max_tokens: maxTokens,
       temperature: config.temperature,
       system,

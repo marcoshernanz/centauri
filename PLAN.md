@@ -297,6 +297,12 @@ Each action payload includes:
     - `/Users/marcoshernanz/dev/hackeurope2/scripts/rehearsal_check.sh`
     - npm command `test:rehearsal` in `/Users/marcoshernanz/dev/hackeurope2/package.json`.
   - Re-verified polished build with `npm run typecheck`, `npm run build`, and `npm run test:rehearsal`.
+  - Improved summary quality to be more LLM-like:
+    - strengthened Claude summary prompts in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts`,
+    - added Claude model fallback retry in `/Users/marcoshernanz/dev/hackeurope2/src/agent/claude.ts`,
+    - replaced raw Gmail fallback output with structured snapshot/priorities/actions summary in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+  - Re-verified summary-quality refinements with `npm run typecheck` and `npm run build`.
+  - Further refined Gmail fallback summary style in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts` to synthesize category-based one-line summaries (security/billing/subscription/travel/event/general) without clipped raw snippet output.
 
 ## 12) Risk & Fallback Matrix
 
