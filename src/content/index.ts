@@ -32,6 +32,17 @@ function initializeContentScript(): void {
       return;
     }
 
+    if (message.type === "ui/open-command-bar") {
+      commandBar.open();
+      return;
+    }
+
+    if (message.type === "ui/set-command-state") {
+      commandBar.open();
+      commandBar.setState(message.payload.state);
+      return;
+    }
+
     if (message.type === "ui/show-result") {
       commandBar.open();
       if (!message.payload.ok) {

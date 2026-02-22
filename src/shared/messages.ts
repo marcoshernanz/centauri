@@ -12,6 +12,17 @@ export type ToggleCommandBarMessage = {
   type: "ui/toggle-command-bar";
 };
 
+export type OpenCommandBarMessage = {
+  type: "ui/open-command-bar";
+};
+
+export type SetCommandStateMessage = {
+  type: "ui/set-command-state";
+  payload: {
+    state: UIState;
+  };
+};
+
 export type ShowResultMessage = {
   type: "ui/show-result";
   payload: {
@@ -64,4 +75,10 @@ export type ExecuteActionsResponse = {
   };
 };
 
-export type RuntimeMessage = ToggleCommandBarMessage | ShowResultMessage | SubmitTaskMessage | ExecuteActionsMessage;
+export type RuntimeMessage =
+  | ToggleCommandBarMessage
+  | OpenCommandBarMessage
+  | SetCommandStateMessage
+  | ShowResultMessage
+  | SubmitTaskMessage
+  | ExecuteActionsMessage;

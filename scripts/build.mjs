@@ -4,6 +4,10 @@ import { dirname, resolve } from "node:path";
 
 const envValues = await loadDotEnv();
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? envValues.ANTHROPIC_API_KEY ?? "";
+const elevenlabsApiKey = process.env.ELEVENLABS_API_KEY ?? envValues.ELEVENLABS_API_KEY ?? "";
+const elevenlabsVoiceId = process.env.ELEVENLABS_VOICE_ID ?? envValues.ELEVENLABS_VOICE_ID ?? "";
+const elevenlabsSpeechProfile =
+  process.env.ELEVENLABS_SPEECH_PROFILE ?? envValues.ELEVENLABS_SPEECH_PROFILE ?? "eleven_multilingual_v2";
 
 const entries = [
   {
@@ -22,12 +26,16 @@ for (const item of entries) {
     outfile: resolve(item.outfile),
     bundle: true,
     format: "iife",
+    jsx: "automatic",
     platform: "browser",
     target: "chrome114",
     sourcemap: false,
     legalComments: "none",
     define: {
-      __NWA_ANTHROPIC_API_KEY__: JSON.stringify(anthropicApiKey)
+      __NWA_ANTHROPIC_API_KEY__: JSON.stringify(anthropicApiKey),
+      __NWA_ELEVENLABS_API_KEY__: JSON.stringify(elevenlabsApiKey),
+      __NWA_ELEVENLABS_VOICE_ID__: JSON.stringify(elevenlabsVoiceId),
+      __NWA_ELEVENLABS_SPEECH_PROFILE__: JSON.stringify(elevenlabsSpeechProfile)
     }
   });
 }

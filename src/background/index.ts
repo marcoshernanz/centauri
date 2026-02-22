@@ -11,7 +11,8 @@ import type {
   RuntimeMessage,
   ShowResultMessage,
   SubmitTaskMessage,
-  SubmitTaskResponse
+  SubmitTaskResponse,
+  UIState
 } from "../shared/messages";
 import { callClaude, loadAgentConfig, loadClaudeConfig, type AgentConfig, type ClaudeConfig } from "../agent/claude";
 import {
@@ -162,6 +163,8 @@ async function handleSubmit(message: SubmitTaskMessage, sender: chrome.runtime.M
   if (!tabId) {
     return toError("Cannot identify active tab");
   }
+
+  await showRunShellState(tabId, "executing");
 
   const targetCount = parseRequestedCount(trimmedPrompt);
   const genericTargetCount = inferGenericTargetCount(trimmedPrompt);
@@ -960,7 +963,18 @@ async function navigateTab(tabId: number, url: string, agentConfig?: AgentConfig
   try {
     await chrome.tabs.update(tabId, { url });
     const runtimeConfig = agentConfig ?? (await loadAgentConfig());
-    return waitForTabReady(tabId, runtimeConfig.runtime.tabReadyTimeoutMs, runtimeConfig.runtime.tabPollIntervalMs, url);
+    const ready = await waitForTabReady(
+      tabId,
+      runtimeConfig.runtime.tabReadyTimeoutMs,
+      runtimeConfig.runtime.tabPollIntervalMs,
+      url
+    );
+
+    if (ready) {
+      await showRunShellState(tabId, "executing");
+    }
+
+    return ready;
   } catch {
     return false;
   }
@@ -1755,6 +1769,39 @@ async function pushUiResult(tabId: number, response: SubmitTaskResponse, elapsed
     }
   };
 
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+    return;
+  } catch (error: unknown) {
+    if (!isNoReceiverError(error)) {
+      return;
+    }
+  }
+
+  const injected = await injectContentScript(tabId);
+  if (!injected) {
+    return;
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch {
+    // Best effort only.
+  }
+}
+
+async function showRunShellState(tabId: number, state: UIState): Promise<void> {
+  await sendUiControlMessage(tabId, { type: "ui/open-command-bar" });
+  await sendUiControlMessage(tabId, {
+    type: "ui/set-command-state",
+    payload: { state }
+  });
+}
+
+async function sendUiControlMessage(
+  tabId: number,
+  message: Extract<RuntimeMessage, { type: "ui/open-command-bar" | "ui/set-command-state" }>
+): Promise<void> {
   try {
     await chrome.tabs.sendMessage(tabId, message);
     return;

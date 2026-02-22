@@ -80,6 +80,13 @@
 | T27 | P1 | DONE | Generic relevance ranking + partial coverage warnings | 45m | T25,T18 | Candidate selection avoids nav noise and reports shortfalls clearly |
 | T28 | P1 | DONE | UI contrast hardening against host-page CSS overrides | 15m | T23 | Output/trace text remains readable on sites like Wikipedia |
 | T29 | P1 | DONE | Humanize deterministic summaries and run-copy tone | 30m | T12,T23 | Output avoids robotic labels and clipped ellipsis-heavy phrasing |
+| T30 | P0 | DONE | Replace local command bar with imported hackeurope UI shell while preserving backend/executor | 1h | T03,T11 | Content UI uses transplanted shell components from sibling repo; background/task execution unchanged; build + typecheck pass |
+| T31 | P0 | TODO | Re-run demo-critical acceptance checks (HN + Gmail) with transplanted shell UI in Chrome | 30m | T30,T21,T22 | Both demo prompts complete with expected summaries and no UI regressions |
+| T32 | P1 | TODO | Validate generic flow on 2-3 non-adapter sites with new UI and capture regressions | 30m | T30,T25,T27 | Generic summarize-top/recent prompts complete or fail-partial clearly with stable UI |
+| T33 | P0 | DONE | Fix post-merge UI regressions (logo/nav persistence/voice controls/minimized controls/border polish) | 45m | T30 | HN logo renders reliably, shell remains visible across navigation, mic+speaker are enabled, minimized action buttons are hidden, and border styling is cleaned up |
+| T34 | P1 | DONE | Refine shell visual styling (logo/send accent, inner border cleanup, bottom box removal) | 20m | T33 | Logo and send button styling match requested orange accent, inner message border removed, logo centered, and completed-state status box removed |
+| T35 | P1 | DONE | Add favicon fallback + top spacing + readable summary formatting | 20m | T34 | Shell icon resolves from page favicon with fallback, history content has better top spacing, and summary text is rendered with clearer line structure |
+| T36 | P0 | DONE | Restore Centuri logo identity and switch TTS to ElevenLabs API | 30m | T35 | Shell icon no longer uses page favicon override, and speaker playback synthesizes audio via ElevenLabs with configured voice/model env vars |
 
 ## 5) Architecture Implementation Details
 
@@ -226,10 +233,16 @@ Each action payload includes:
   - T27 Generic candidate ranking + coverage warnings
   - T28 UI contrast hardening for cross-site pages
   - T29 Humanized summary formatting pass
+  - T30 Imported UI shell merge from `/Users/marcoshernanz/dev/hackeurope/apps/extension`
+  - T33 Post-merge UI regression fixes for shell behavior and controls
+  - T34 Shell visual refinements from user feedback
+  - T35 Favicon fallback and readability formatting pass
+  - T36 Logo identity + ElevenLabs TTS integration
 - In progress:
   - None
 - Next up:
-  - Manual validation on 2-3 non-adapter websites and final tuning
+  - T31 Re-run demo-critical HN + Gmail flows in Chrome with the transplanted shell UI
+  - T32 Manual validation on 2-3 non-adapter websites and final tuning
 
 ## 11) Work Log
 - 2026-02-21:
@@ -342,6 +355,35 @@ Each action payload includes:
     - updated Claude summary prompt guidance in `/Users/marcoshernanz/dev/hackeurope2/src/agent/prompts.ts` to avoid robotic labels and ellipsis-heavy output.
     - adjusted top run-copy from `OK` wording to `completed` in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
   - Re-verified T29 with `npm run typecheck` and `npm run build`.
+  - Completed T30 UI transplant merge (keep backend, import sibling-project UI shell):
+    - copied shell UI components from `/Users/marcoshernanz/dev/hackeurope/apps/extension` into `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`, `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/centuri-logo.ts`, and `/Users/marcoshernanz/dev/hackeurope2/src/content/components/prompt-kit/text-shimmer.tsx`.
+    - replaced `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.ts` with React-backed `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx` that wraps imported shell UI and preserves existing submit/message wiring.
+    - enabled TSX React build/type support in `/Users/marcoshernanz/dev/hackeurope2/tsconfig.json` and `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
+    - added React runtime dependencies in `/Users/marcoshernanz/dev/hackeurope2/package.json` and lockfile.
+  - Re-verified T30 with `npm run typecheck` and `npm run build`.
+  - Completed T33 post-merge UI fixes based on validation feedback:
+    - added explicit UI control runtime messages (`ui/open-command-bar`, `ui/set-command-state`) in `/Users/marcoshernanz/dev/hackeurope2/src/shared/messages.ts` and handlers in `/Users/marcoshernanz/dev/hackeurope2/src/content/index.ts`.
+    - kept shell visible during cross-page navigation by pushing open/executing state after navigation in `/Users/marcoshernanz/dev/hackeurope2/src/background/index.ts`.
+    - enabled mic and speaker controls in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx` using Web Speech API and browser speech synthesis.
+    - switched shell logo rendering from CSS mask to image source fallback in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx` for more reliable rendering on sites like Hacker News.
+    - hid top-right shell action buttons when minimized and reduced visual border intensity/duplicate CSS blocks in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+  - Re-verified T33 with `npm run typecheck` and `npm run build`.
+  - Completed T34 shell visual refinement pass:
+    - made logo accent orange and centered in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - kept send button in orange accent even in disabled visual state in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - removed inner message bubble border styling in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - removed completed/error status pill rendering (bottom mini box) by showing status only while actively planning/executing in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+  - Re-verified T34 with `npm run typecheck` and `npm run build`.
+  - Completed T35 readability + favicon pass:
+    - added page favicon detection with robust fallback to embedded Centuri icon in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - added extra top padding for history content to avoid tight top-edge layout in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - improved summary rendering readability by preserving meaningful line structure in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx` and adding summary text normalization/splitting in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx`.
+  - Re-verified T35 with `npm run typecheck` and `npm run build`.
+  - Completed T36 logo identity + ElevenLabs speech integration:
+    - removed page-favicon logo substitution and pinned shell icon to Centuri asset in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/shell.tsx`.
+    - replaced browser `speechSynthesis` fallback path with ElevenLabs API audio synthesis/playback in `/Users/marcoshernanz/dev/hackeurope2/src/content/ui/commandBar.tsx`.
+    - injected ElevenLabs env vars (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_SPEECH_PROFILE`) at build time via `/Users/marcoshernanz/dev/hackeurope2/scripts/build.mjs`.
+  - Re-verified T36 with `npm run typecheck` and `npm run build`.
 
 ## 12) Risk & Fallback Matrix
 
@@ -354,6 +396,6 @@ Each action payload includes:
 | Live network/API issue | High | Low/Medium | Warm-up call pre-demo + retries | Local mocked summary from collected snippets |
 
 ## 13) Immediate Next Steps
-1. Re-run demo-critical checks on Hacker News and Gmail with real prompts.
-2. Validate generic flow on at least three non-adapter sites (news/blog/docs) using “summarize top/recent N” prompts.
+1. T31: Re-run demo-critical checks on Hacker News and Gmail with real prompts.
+2. T32: Validate generic flow on at least three non-adapter sites (news/blog/docs) using “summarize top/recent N” prompts.
 3. Perform one full rehearsal using `npm run test:rehearsal` and `/Users/marcoshernanz/dev/hackeurope2/DEMO_RUNBOOK.md`.

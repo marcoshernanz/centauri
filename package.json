@@ -13,8 +13,14 @@
     "test:rehearsal": "bash scripts/rehearsal_check.sh"
   },
   "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/chrome": "^0.1.30",
     "esbuild": "^0.25.10",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }
